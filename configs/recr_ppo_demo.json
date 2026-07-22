@@ -1,0 +1,81 @@
+{
+  "experiment_name": "recr_ppo_demo",
+  "generator": {
+    "num_workflows": 20,
+    "mean_interarrival": 3.0,
+    "min_tasks": 3,
+    "max_tasks": 8,
+    "workload_gc_range": [0.5, 20.0],
+    "edge_data_mb": 1.0,
+    "deadline_type": "medium",
+    "ref_freq_hz": 3.0e9,
+    "energy_eta": 0.5,
+    "reliability_target": 0.9,
+    "Rreq": 0.9
+  },
+  "dataset": {
+    "type": "alibaba_pool",
+    "train_path": "outputs/alibaba_train.json",
+    "test_path": "outputs/alibaba_test.json",
+    "num_workflows": 100,
+    "mean_interarrival": 3.0,
+    "workload_gc_min": 0.5,
+    "workload_gc_max": 20.0,
+    "workload_jitter_min": 0.8,
+    "workload_jitter_max": 1.2,
+    "data_size_mb_min": 1.0,
+    "data_size_mb_max": 30.0,
+    "deadline_type": "medium",
+    "Rreq": 0.9
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_default.json",
+    "num_edge": 8,
+    "num_cloud": 4
+  },
+  "simulation": {
+    "default_rho": 1.0,
+    "rho_min": 0.5,
+    "time_horizon": 600.0,
+    "ref_freq_hz": 3.0e9,
+    "energy_eta": 0.5,
+    "deadline_type": "medium",
+    "default_reliability": 0.9
+  },
+  "agent": {
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "ppo_epochs": 4,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "learning_rate": 0.0003,
+    "hidden_dim": 128,
+    "max_rho_levels": 6,
+    "device": "cpu",
+    "state": {
+      "max_ready_tasks": 32,
+      "max_servers": 16,
+      "time_horizon": 600.0,
+      "ref_freq_hz": 3.0e9
+    },
+    "reward": {
+      "alpha": 1.0,
+      "beta": 0.2,
+      "gamma": 0.1,
+      "budget_coef": 0.5,
+      "energy_scale": 100.0,
+      "reliability_target": 0.9
+    }
+  },
+  "training": {
+    "train_episodes": 5,
+    "eval_episodes": 3,
+    "eval_every": 5,
+    "save_every": 10,
+    "eval_seed": 10042,
+    "final_eval": true,
+    "seed": 42,
+    "checkpoint": "results/recr_ppo_demo/recr_ppo.pt"
+  }
+}

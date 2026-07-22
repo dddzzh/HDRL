@@ -1,0 +1,34 @@
+{
+  "experiment_name": "alibaba_dynamic_workflow_test",
+  "dataset": {
+    "type": "alibaba_json",
+    "path": "outputs/alibaba_workflows_with_arrivals.json",
+    "max_workflows": 100,
+    "shuffle": false,
+    "deadline_type": "medium",
+    "Rreq": 0.9
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_default.json",
+    "num_edge": 12,
+    "num_cloud": 4
+  },
+  "scheduler": {
+    "name": "fcfs",
+    "params": {
+      "rho": 1.0
+    }
+  },
+  "simulation": {
+    "default_rho": 1.0,
+    "rho_min": 0.5,
+    "deadline_type": "medium",
+    "default_reliability": 0.9,
+    "use_deadline": false,
+    "use_reliability": false
+  },
+  "runs": {
+    "seeds": [42],
+    "output_root": "results"
+  }
+}

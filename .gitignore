@@ -1,0 +1,32 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor files
+.idea/
+.vscode/
+
+# Generated data and experiment outputs
+dataset/
+outputs/
+results/
+
+# Archives and large local artifacts
+*.rar
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# OS files
+.DS_Store
+Thumbs.db

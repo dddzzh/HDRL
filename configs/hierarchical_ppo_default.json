@@ -1,0 +1,123 @@
+{
+  "experiment_name": "hierarchical_ppo_train",
+  "dataset": {
+    "type": "pegasus",
+    "num_workflows": 50,
+    "deadline_type": "medium"
+  },
+  "generator": {
+    "num_workflows": 50,
+    "num_tasks": 20,
+    "min_tasks": 20,
+    "max_tasks": 20,
+    "arrival_process": "multi_device_poisson",
+    "num_mobile_devices": 5,
+    "arrival_rate": 0.05,
+    "workload_gc_min": 0.5,
+    "workload_gc_max": 20.0,
+    "workload_jitter_min": 0.8,
+    "workload_jitter_max": 1.2,
+    "data_size_mb_min": 1.0,
+    "data_size_mb_max": 30.0,
+    "Rreq": 0.9
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_default.json",
+    "num_edge": 20,
+    "num_cloud": 6
+  },
+  "simulation": {
+    "default_rho": 1.0,
+    "time_horizon": 600.0,
+    "energy_eta": 0.5,
+    "default_reliability": 0.9,
+    "reliability_exponent": 1.0,
+    "enable_backup_duplication": true,
+    "remaining_task_reliability_estimate": 0.999,
+    "backup_rho_levels": [1.0]
+  },
+  "agent": {
+    "shared": {
+      "device": "gpu",
+      "state": {
+        "max_ready_tasks": 32,
+        "time_horizon": 600.0
+      }
+    },
+    "high": {
+      "gamma": 0.99,
+      "reward_gamma": 0.99,
+      "reward_gae_lambda": 0.95,
+      "cost_gamma": 1.0,
+      "cost_gae_lambda": 1.0,
+      "use_p3o": true,
+      "kappa_deadline": 10.0,
+      "kappa_reliability": 5.0,
+      "cost_value_coef": 1.0,
+      "deadline_gate_margin_ratio": 0.05,
+      "deadline_severity_coef": 2.0,
+      "deadline_violation_clip": 1.0,
+      "reliability_gate_margin_ratio": 0.05,
+      "reliability_severity_coef": 2.0,
+      "reliability_violation_clip_ratio": 1.0,
+      "server_balanced_minibatch": false,
+      "gae_lambda": 0.95,
+      "clip_ratio": 0.1,
+      "ppo_epochs": 3,
+      "entropy_coef": 0.03,
+      "value_coef": 0.5,
+      "learning_rate": 0.0001,
+      "max_grad_norm": 1.0,
+      "batch_size": 128,
+      "hidden_dim": 256,
+      "hidden_layers": 3
+    },
+    "low": {
+      "gamma": 0.0,
+      "reward_gamma": 0.0,
+      "use_p3o": false,
+      "server_balanced_minibatch": true,
+      "gae_lambda": 0.95,
+      "clip_ratio": 0.2,
+      "ppo_epochs": 4,
+      "entropy_coef": 0.01,
+      "value_coef": 0.5,
+      "learning_rate": 0.0003,
+      "max_grad_norm": 1.0,
+      "batch_size": 64,
+      "hidden_dim": 256,
+      "hidden_layers": 2,
+      "rho_min": 0.1,
+      "beta_concentration_min": 1.0,
+      "beta_action_eps": 0.000001
+    }
+  },
+  "scheduler": {
+    "name": "dual_ppo",
+    "params": {}
+  },
+  "training": {
+    "episodes": 200,
+    "rollout_length": 128,
+    "update_mode": "episode_end",
+    "save_every": 50,
+    "eval_interval": 50,
+    "eval_episodes": 5,
+    "use_p3o": true,
+    "kappa_deadline": 10.0,
+    "kappa_reliability": 5.0,
+    "deadline_cost_limit": null,
+    "reliability_cost_limit": null,
+    "cost_value_coef": 1.0,
+    "low_local_deadline_penalty_coef": 10.0,
+    "low_workflow_deadline_penalty_coef": 5.0,
+    "low_infeasible_penalty": 1.0,
+    "low_deadline_safety_margin_ratio": 0.05,
+    "energy_norm_beta": 0.99,
+    "checkpoint_dir": "results/hierarchical_ppo"
+  },
+  "runs": {
+    "seeds": [42],
+    "output_root": "results"
+  }
+}
