@@ -4,16 +4,14 @@ import argparse
 import copy
 import csv
 import json
+import random
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from src.datasets.arrival_process import (
+    CAI_2025_ARRIVAL_PROCESS,
     POISSON_ARRIVAL_DEFINITION,
-    poisson_arrival_rate,
-    resolve_mean_interarrival,
-    sample_poisson_arrivals,
+    sample_configured_arrivals,
 )
 
 
@@ -30,30 +28,30 @@ def load_workflows(path: str | Path) -> dict[str, Any]:
 
 def assign_poisson_arrivals(
     data: dict[str, Any],
-    mean_interarrival: float,
+    arrival_rate: float,
     start_time: float,
     seed: int,
     shuffle: bool,
     edge_data_mb: float | None = None,
-    arrival_rate: float | None = None,
 ) -> dict[str, Any]:
-    arrival_config = {"mean_interarrival": mean_interarrival}
-    if arrival_rate is not None:
-        arrival_config["arrival_rate"] = arrival_rate
-    mean_interarrival = resolve_mean_interarrival(arrival_config)
-    arrival_rate = poisson_arrival_rate(mean_interarrival)
+    arrival_rate = float(arrival_rate)
+    if arrival_rate <= 0.0:
+        raise ValueError("arrival_rate must be positive")
+    arrival_config = {
+        "arrival_process": CAI_2025_ARRIVAL_PROCESS,
+        "arrival_rate": arrival_rate,
+    }
 
     result = copy.deepcopy(data)
     workflows = list(result.get("workflows", []))
-    rng = np.random.default_rng(seed)
+    rng = random.Random(seed)
 
     if shuffle:
-        indices = rng.permutation(len(workflows))
-        workflows = [workflows[index] for index in indices]
+        rng.shuffle(workflows)
 
-    arrival_times, inter_arrival_times = sample_poisson_arrivals(
+    arrival_times, inter_arrival_times, _, arrival_process = sample_configured_arrivals(
         len(workflows),
-        mean_interarrival,
+        arrival_config,
         start_time,
         rng,
     )
@@ -61,8 +59,7 @@ def assign_poisson_arrivals(
         workflow["arrival_index"] = index
         workflow["arrival_time"] = float(arrival_times[index])
         workflow["inter_arrival_time"] = float(inter_arrival_times[index])
-        workflow["arrival_process"] = "poisson"
-        workflow["mean_interarrival"] = float(mean_interarrival)
+        workflow["arrival_process"] = arrival_process
         workflow["arrival_rate"] = float(arrival_rate)
 
     if edge_data_mb is None:
@@ -77,9 +74,9 @@ def assign_poisson_arrivals(
 
     result["workflows"] = workflows
     result["num_workflows"] = len(workflows)
-    result["arrival_process"] = "poisson"
+    result["arrival_process"] = CAI_2025_ARRIVAL_PROCESS
     result["arrival_definition"] = ARRIVAL_DEFINITION
-    result["mean_interarrival"] = float(mean_interarrival)
+    result["mean_interarrival"] = 1.0 / float(arrival_rate)
     result["arrival_rate"] = float(arrival_rate)
     result["arrival_start_time"] = float(start_time)
     result["arrival_time_unit"] = "second"
@@ -155,12 +152,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", default=DEFAULT_INPUT)
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     parser.add_argument("--summary", default=DEFAULT_SUMMARY)
-    parser.add_argument("--mean_interarrival", type=float, default=60.0)
     parser.add_argument(
         "--arrival-rate",
         type=float,
-        default=None,
-        help="Poisson arrival rate lambda in workflows/second; paper default is 1/60",
+        default=0.1,
+        help="Cai 2025 system-wide Poisson rate lambda in workflows/second.",
     )
     parser.add_argument("--start_time", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
@@ -183,12 +179,11 @@ def main() -> None:
     input_data = load_workflows(input_path)
     output_data = assign_poisson_arrivals(
         data=input_data,
-        mean_interarrival=args.mean_interarrival,
+        arrival_rate=args.arrival_rate,
         start_time=args.start_time,
         seed=args.seed,
         shuffle=args.shuffle,
         edge_data_mb=args.edge_data_mb,
-        arrival_rate=args.arrival_rate,
     )
     save_json(output_data, output_path)
     save_summary(output_data, summary_path)

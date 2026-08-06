@@ -14,11 +14,13 @@ env/
 # IDE/editor files
 .idea/
 .vscode/
+.vs/
 
 # Generated data and experiment outputs
 dataset/
 outputs/
 results/
+tmp/
 
 # Archives and large local artifacts
 *.rar

@@ -5,21 +5,21 @@ try:
 except ImportError:  # pragma: no cover
     torch = None
 
-# 仿真 / 数据生成 / numpy 特征编码始终在 CPU，不会也不应迁到 GPU。
+# Simulation, data generation, metrics, and numpy state encoding stay on CPU.
 SIMULATION_DEVICE = "cpu"
 
 
 def resolve_agent_device(device: str | None = None):
-    """PPO/A2C 网络与 optimizer 使用的 device（仅 agent 侧）。"""
+    """Device used by neural-network agents and optimizers."""
     return resolve_device(device)
 
 
 def resolve_device(device: str | None = None):
     """Resolve agent training device.
 
-    - ``cpu``：网络在 CPU（本项目的仿真瓶颈场景推荐）
-    - ``cuda`` / ``cuda:0``：仅 PPO/A2C 网络在 GPU
-    - ``auto``：有 CUDA 时用 GPU，否则 CPU
+    - ``cpu``: run agent networks on CPU.
+    - ``cuda`` / ``cuda:0``: run agent networks on GPU.
+    - ``auto``: use CUDA when available, otherwise CPU.
     """
     _require_torch()
     device_name = str(device).lower() if device is not None else None
@@ -48,7 +48,7 @@ def describe_device(device) -> str:
 def describe_runtime_devices(agent_device) -> str:
     return (
         f"simulation={SIMULATION_DEVICE} (env / metrics / state encoding), "
-        f"agent={describe_device(agent_device)} (PPO network only)"
+        f"agent={describe_device(agent_device)} (neural-network agents)"
     )
 
 

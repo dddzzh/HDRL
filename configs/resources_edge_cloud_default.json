@@ -4,8 +4,6 @@
     "model": "recr",
     "heterogeneity": 0.0,
     "links_mbps": {
-      "iot_edge": 50.0,
-      "iot_cloud": 20.0,
       "edge_cloud": 100.0,
       "edge_edge": 1000.0,
       "cloud_cloud": 10000.0

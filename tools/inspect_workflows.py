@@ -63,7 +63,7 @@ def main() -> None:
     if dataset_type == "alibaba_pool":
         sampler = WorkflowSampler.from_file(
             dataset_cfg.get("train_path", "outputs/alibaba_train.json"),
-            mean_interarrival=float(dataset_cfg.get("mean_interarrival", 60.0)),
+            arrival_rate=float(dataset_cfg.get("arrival_rate", 0.1)),
             mapping_config=dataset_cfg,
             resources=resources,
         )

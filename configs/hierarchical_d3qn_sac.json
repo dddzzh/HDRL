@@ -1,0 +1,94 @@
+{
+  "generator": {
+    "num_workflows": 20,
+    "dataset_scale": "small",
+    "arrival_process": "cai_2025_exponential",
+    "arrival_rate": 0.1
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_default.json",
+    "num_edge": 20,
+    "num_cloud": 6
+  },
+  "simulation": {
+    "deadline_type": "medium",
+    "workflow_reliability_requirement": 0.9,
+    "default_rho": 1.0,
+    "rho_min": 0.2,
+    "energy_eta": 0.5,
+    "default_reliability": 0.9,
+    "reliability_exponent": 1.0,
+    "enable_backup_duplication": false,
+    "remaining_task_reliability_estimate": 0.999,
+    "server_history_ema_alpha": 0.9
+  },
+  "agent": {
+    "high_algorithm": "d3qn",
+    "low_algorithm": "sac",
+    "shared": {
+      "device": "auto",
+      "state": {
+        "max_ready_tasks": 32
+      }
+    },
+    "high": {
+      "action_mode": "primary_only",
+      "backup_selection": "disabled",
+      "hidden_dim": 256,
+      "hidden_layers": 2,
+      "learning_rate": 0.0003,
+      "reward_gamma": 0.99,
+      "epsilon_min": 0.1,
+      "epsilon_decay": 0.00018,
+      "replay_size": 50000,
+      "batch_size": 256,
+      "training_per_episode": 10,
+      "deadline_cost_reward_weight": 1.5
+    },
+    "low": {
+      "algorithm": "sac",
+      "hidden_dim": 128,
+      "hidden_layers": 2,
+      "learning_rate": 0.0003,
+      "gamma": 0.99,
+      "tau": 0.005,
+      "alpha": 0.2,
+      "automatic_entropy_tuning": false,
+      "action_dim": 1,
+      "log_std_min": -5.0,
+      "log_std_max": 2.0,
+      "replay_size": 50000,
+      "batch_size": 128,
+      "training_per_episode": 10,
+      "max_grad_norm": 1.0,
+      "reward": {
+        "energy_weight": 1.0,
+        "time_weight": 1.0,
+        "deadline_fixed_penalty": 5.0,
+        "deadline_severity_weight": 2.0,
+        "reliability_fixed_penalty": 5.0,
+        "reliability_severity_weight": 2.0,
+        "component_clip": 3.0,
+        "std_floor": 0.05
+      }
+    }
+  },
+  "objective": {
+    "high_makespan_weight": 0.4,
+    "high_energy_weight": 0.6,
+    "high_reliability_fixed_penalty": 5.0,
+    "high_reliability_severity_weight": 2.0
+  },
+  "training": {
+    "seed": 42,
+    "training_mode": "joint",
+    "total_episodes": 1500,
+    "update_mode": "episode_end",
+    "eval_interval": 20,
+    "eval_episodes": 20,
+    "eval_seed": 242000,
+    "save_every": 20,
+    "save_replay_buffer": false,
+    "checkpoint_dir": "results/hierarchical_d3qn_sac"
+  }
+}

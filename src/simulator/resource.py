@@ -3,7 +3,7 @@ import json
 import random
 from pathlib import Path
 
-from src.simulator.network import build_network_config
+from src.simulator.network import apply_edge_device_shannon, build_network_config
 
 
 SERVER_RANGE_FIELDS = (
@@ -96,6 +96,8 @@ def load_resources(path, num_edge=None, num_cloud=None, seed=42):
 
     for server in resources["servers"]:
         _normalize_server(server)
+
+    apply_edge_device_shannon(resources, rng)
 
     print_resource_diagnostics(resources)
     return resources
@@ -370,6 +372,11 @@ def print_resource_diagnostics(resources):
             f"static_power={float(server.get('static_power', 0.0)):.4f} "
             f"dynamic_power={float(server.get('dynamic_power', 0.0)):.4f} "
             f"bandwidth_mbps={float(server.get('bandwidth_mbps', 0.0)):.2f}"
+            + (
+                f" device_distance_m={float(server['device_distance_m']):.2f}"
+                if server.get("device_distance_m") is not None
+                else ""
+            )
         )
     count_text = "; ".join(f"{name}={count}" for name, count in sorted(counts.items()))
     print(f"[resources] profile_counts {count_text}")

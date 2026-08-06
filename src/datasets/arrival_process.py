@@ -5,12 +5,12 @@ from typing import Any, Mapping
 
 
 DEFAULT_POISSON_ARRIVAL_RATE = 0.01
+CAI_2025_ARRIVAL_PROCESS = "cai_2025_exponential"
 POISSON_ARRIVAL_DEFINITION = (
-    "Reference createTimeTable arrivals: each mobile device starts at 0, "
-    "then advances by random.expovariate(lambdaRate); all device streams are "
-    "merged and the earliest numWorkflows arrivals are kept."
+    "Cai et al. (2025): one system-wide workflow stream; the intervals "
+    "between consecutive workflows follow Exp(lambda), where lambda is the "
+    "expected number of workflow arrivals per second."
 )
-MULTI_DEVICE_POISSON_ARRIVAL_DEFINITION = POISSON_ARRIVAL_DEFINITION
 
 
 def resolve_arrival_rate(config: Mapping[str, Any] | None, default=DEFAULT_POISSON_ARRIVAL_RATE):
@@ -29,88 +29,69 @@ def resolve_arrival_rate(config: Mapping[str, Any] | None, default=DEFAULT_POISS
     return value
 
 
-def create_time_table(num_mobile_devices, num_workflows, lambda_rate, rng=None):
-    if int(num_mobile_devices) <= 0:
-        raise ValueError("num_mobile_devices must be positive")
+def create_cai_2025_time_table(num_workflows, lambda_rate, rng=None):
+    """Generate one exponential workflow-arrival stream as in Cai et al. (2025)."""
     if int(num_workflows) < 0:
         raise ValueError("num_workflows must be non-negative")
     lambda_rate = float(lambda_rate)
     if lambda_rate <= 0.0:
-        raise ValueError("lambdaRate must be positive")
+        raise ValueError("arrival_rate/lambdaRate must be positive")
     rng = rng or random
 
-    time_table = []
-    for _ in range(int(num_mobile_devices)):
-        workflow_list = [0.0]
-        for _ in range(1, int(num_workflows)):
-            interval = rng.expovariate(lambda_rate)
-            workflow_list.append(workflow_list[-1] + interval)
-        time_table.append(workflow_list)
-
-    all_times = [
-        (float(time_value), int(device_id))
-        for device_id, sublist in enumerate(time_table)
-        for time_value in sublist
-    ]
-    return sorted(all_times, key=lambda item: item[0])[: int(num_workflows)]
+    arrival_times = []
+    current_time = 0.0
+    for index in range(int(num_workflows)):
+        if index > 0:
+            current_time += rng.expovariate(lambda_rate)
+        arrival_times.append(float(current_time))
+    return arrival_times
 
 
 def sample_configured_arrivals(count, config, start_time=0.0, rng=None):
     config = config or {}
-    if str(config.get("arrival_process", "multi_device_poisson")).lower() not in {
-        "multi_device_poisson",
-        "device_poisson",
-        "senior_poisson",
-    }:
-        raise ValueError("Only reference multi-device Poisson arrivals are supported.")
+    arrival_process = str(config.get("arrival_process", CAI_2025_ARRIVAL_PROCESS)).lower()
+    if arrival_process != CAI_2025_ARRIVAL_PROCESS:
+        raise ValueError(
+            f"Unsupported arrival_process={arrival_process!r}; expected "
+            f"{CAI_2025_ARRIVAL_PROCESS!r}."
+        )
     lambda_rate = resolve_arrival_rate(config)
-    num_mobile_devices = int(
-        config.get("num_mobile_devices", config.get("num_devices", config.get("mobile_devices", 1)))
-    )
     py_rng = _as_python_rng(rng)
-    rows = create_time_table(num_mobile_devices, count, lambda_rate, rng=py_rng)
     start_time = float(start_time)
-    arrival_times = [start_time + float(time_value) for time_value, _ in rows]
-    source_device_ids = [int(device_id) for _, device_id in rows]
+    relative_times = create_cai_2025_time_table(count, lambda_rate, rng=py_rng)
+    arrival_times = [start_time + value for value in relative_times]
+    # The scheduler no longer models one arrival stream per IoT device.  This
+    # placeholder is retained only for the serialized Workflow schema.
+    source_device_ids = [0 for _ in arrival_times]
     inter_arrival_times = []
     previous = start_time
     for index, arrival_time in enumerate(arrival_times):
         inter_arrival_times.append(0.0 if index == 0 else max(0.0, arrival_time - previous))
         previous = arrival_time
-    return arrival_times, inter_arrival_times, source_device_ids, "multi_device_poisson"
+    return arrival_times, inter_arrival_times, source_device_ids, CAI_2025_ARRIVAL_PROCESS
 
 
-def sample_multi_device_poisson_arrivals(count, arrival_rate, start_time=0.0, rng=None, num_mobile_devices=1):
-    config = {
-        "arrival_rate": arrival_rate,
-        "num_mobile_devices": num_mobile_devices,
-        "arrival_process": "multi_device_poisson",
-    }
-    arrival_times, inter_arrival_times, source_device_ids, _ = sample_configured_arrivals(
+def sample_poisson_arrivals(count, arrival_rate, start_time=0.0, rng=None):
+    """Return Cai-style single-stream arrivals and inter-arrival intervals."""
+    arrivals, intervals, _, _ = sample_configured_arrivals(
         count,
-        config,
+        {
+            "arrival_process": CAI_2025_ARRIVAL_PROCESS,
+            "arrival_rate": arrival_rate,
+        },
         start_time,
         rng,
     )
-    return arrival_times, inter_arrival_times, source_device_ids
-
-
-def sample_poisson_arrivals(*args, **kwargs):
-    raise ValueError("Single-stream poisson arrivals were removed; use create_time_table/sample_configured_arrivals.")
-
-
-def resolve_mean_interarrival(*args, **kwargs):
-    raise ValueError("mean_interarrival was removed; use resolve_arrival_rate.")
-
-
-def poisson_arrival_rate(value):
-    return resolve_arrival_rate({"arrival_rate": value})
+    return arrivals, intervals
 
 
 def debug_check_poisson_arrivals(rng=None):
     arrival_times, _, source_device_ids, _ = sample_configured_arrivals(
         1000,
-        {"arrival_rate": DEFAULT_POISSON_ARRIVAL_RATE, "num_mobile_devices": 3},
+        {
+            "arrival_process": CAI_2025_ARRIVAL_PROCESS,
+            "arrival_rate": DEFAULT_POISSON_ARRIVAL_RATE,
+        },
         0.0,
         rng,
     )

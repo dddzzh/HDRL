@@ -22,10 +22,6 @@ def resources():
                 "edge_cloud": 100.0,
                 "cloud_edge": 100.0,
                 "cloud_cloud": 100.0,
-                "iot_edge": 100.0,
-                "edge_iot": 100.0,
-                "iot_cloud": 100.0,
-                "cloud_iot": 100.0,
             },
         },
         "servers": [
@@ -38,6 +34,7 @@ def resources():
                 "static_power": 1.0,
                 "dynamic_power": 1.0,
                 "memory_gb": 1.0,
+                "bandwidth_mbps": 100.0,
                 "failure_rate": 0.0,
                 "min_rho": 1.0,
                 "execution_available_time": 0.0,
@@ -53,6 +50,7 @@ def resources():
                 "static_power": 1.0,
                 "dynamic_power": 1.0,
                 "memory_gb": 1.0,
+                "bandwidth_mbps": 100.0,
                 "failure_rate": 0.0,
                 "min_rho": 1.0,
                 "execution_available_time": 0.0,
@@ -68,6 +66,7 @@ def resources():
                 "static_power": 1.0,
                 "dynamic_power": 1.0,
                 "memory_gb": 1.0,
+                "bandwidth_mbps": 100.0,
                 "failure_rate": 0.0,
                 "min_rho": 1.0,
                 "execution_available_time": 0.0,
@@ -214,8 +213,34 @@ class TimeModelTests(unittest.TestCase):
         data_ready_time, transfer_time, _ = env.compute_data_ready_time(state, 1, 2)
 
         self.assertEqual(state["task_server"][0], 1)
-        self.assertGreater(data_ready_time, 80.0)
-        self.assertGreater(transfer_time, 0.0)
+        self.assertEqual(transfer_time, 8.0)
+        self.assertEqual(data_ready_time, 88.0)
+
+        same_ready_time, same_transfer_time, _ = env.compute_data_ready_time(state, 1, 1)
+        self.assertEqual(same_transfer_time, 0.0)
+        self.assertEqual(same_ready_time, 80.0)
+
+    def test_explicit_input_output_sizes_do_not_add_ingress_or_egress(self):
+        workflow = Workflow(
+            workflow_id="wf",
+            arrival_time=5.0,
+            absolute_deadline=100.0,
+            tasks=(Task(0, workload_cycles=10.0),),
+            edges=(),
+            input_data_mb=30.0,
+            output_data_mb=30.0,
+        )
+        env = EdgeCloudWorkflowEnv([workflow], resources(), {}, seed=1)
+        env._process_events_through(5.0)
+        ready = env.compute_replica_ready_times(env.workflow_states[0], 0, 0)
+        self.assertEqual(ready["data_ready_time"], 5.0)
+        self.assertEqual(ready["upload_time"], 0.0)
+
+        env.step({"workflow_id": "wf", "task_id": 0, "server_id": 0, "rho": 1.0})
+        env._process_events_through(15.0)
+        state = env.workflow_states[0]
+        self.assertEqual(state["download_time"], 0.0)
+        self.assertEqual(state["egress_finish_time"], state["task_finish_times"][0])
 
     def test_absolute_deadline_count_is_reported(self):
         workflow = Workflow(

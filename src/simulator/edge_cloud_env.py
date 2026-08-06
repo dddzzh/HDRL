@@ -2,8 +2,10 @@ import copy
 import math
 import random
 
+import numpy as np
+
 from src.simulator.event_queue import EventQueue, EventType
-from src.schedulers.heft import reference_heft_makespan
+from src.schedulers.heft import HEFTScheduler, reference_heft_makespan
 from src.simulator.deadline import cai_2025_deadline_fields, validate_deadline_type
 from src.simulator.metrics import compute_summary
 from src.simulator.network import get_link_bandwidth
@@ -14,7 +16,7 @@ from src.simulator.resource import (
     compute_transfer_time,
 )
 from src.simulator.reliability import task_reliability_from_server, workflow_reliability
-from src.simulator.workflow import Task, Workflow, create_workflow_state, get_exit_tasks, is_task_ready
+from src.simulator.workflow import Task, Workflow, create_workflow_state, is_task_ready
 
 
 RELIABILITY_EPS = 1e-12
@@ -39,8 +41,6 @@ class EdgeCloudWorkflowEnv:
         network = self.resources.get("network", {})
         self.link_bandwidth_mbps = dict(network.get("link_bandwidth_mbps", {}))
         self.bandwidth_mbps = float(network.get("bandwidth_mbps", 100.0))
-        self.default_input_data_mb = float(self.sim_config.get("default_input_data_mb", 1.0))
-        self.default_output_data_mb = float(self.sim_config.get("default_output_data_mb", 1.0))
         self.reliability_exponent = float(self.sim_config.get("reliability_exponent", 1.0))
         self.enable_backup_duplication = bool(self.sim_config.get("enable_backup_duplication", False))
         self.workflow_states = [
@@ -60,6 +60,18 @@ class EdgeCloudWorkflowEnv:
         self.server_real_timeline = {int(server["id"]): [] for server in self.servers}
         self._server_busy_completed = {int(server["id"]): 0.0 for server in self.servers}
         self._server_busy_cursor = {int(server["id"]): 0 for server in self.servers}
+        self.server_history_ema_alpha = float(self.sim_config.get("server_history_ema_alpha", 0.9))
+        self.server_history_ema_alpha = min(max(self.server_history_ema_alpha, 0.0), 0.999)
+        self.server_history_stats = {
+            int(server["id"]): {
+                "wait_time_ema": 0.0,
+                "queued_processing_time_ema": 0.0,
+                "queue_count_ema": 0.0,
+                "recent_primary_assignments": 0.0,
+                "recent_backup_assignments": 0.0,
+            }
+            for server in self.servers
+        }
 
         self.event_queue = EventQueue()
         for state in self.workflow_states:
@@ -73,7 +85,7 @@ class EdgeCloudWorkflowEnv:
 
     def get_state(self):
         ready_tasks = self._get_ready_tasks()
-        return {
+        state = {
             "time": self.current_time,
             "ready_tasks": ready_tasks,
             "workflows": {
@@ -113,6 +125,13 @@ class EdgeCloudWorkflowEnv:
                 for server in self.servers
             ],
         }
+        if ready_tasks:
+            current_task = ready_tasks[0]
+            state["decision_context"] = self.build_hierarchical_decision_context(
+                current_task["workflow_id"],
+                current_task["task_id"],
+            )
+        return state
 
     def step(self, action):
         workflow_id = str(action.get("workflow_id"))
@@ -165,7 +184,7 @@ class EdgeCloudWorkflowEnv:
         self._update_done()
         return self.get_state(), -float(final_plan["total_energy"]), self.done, {"event": event}
 
-    def estimate_action_energy_ref(self, action):
+    def estimate_action_metrics_ref_rho1(self, action):
         workflow_id = str(action.get("workflow_id"))
         task_id = int(action.get("task_id"))
         server_id = int(action.get("server_id"))
@@ -209,7 +228,15 @@ class EdgeCloudWorkflowEnv:
             task=task,
             workflow_state=workflow_state,
         )
-        return float(final_plan["total_energy"])
+        return {
+            "total_energy": float(final_plan["total_energy"]),
+            "primary_aft": float(final_plan["primary_plan"]["aft"]),
+            "final_aft": float(final_plan["final_aft"]),
+            "final_reliability": float(final_plan["final_reliability"]),
+        }
+
+    def estimate_action_energy_ref(self, action):
+        return float(self.estimate_action_metrics_ref_rho1(action)["total_energy"])
 
     def estimate_primary_energy_ref_rho1(self, action):
         workflow_id = str(action.get("workflow_id"))
@@ -270,11 +297,13 @@ class EdgeCloudWorkflowEnv:
             "workflow_id": workflow_id,
             "task_id": task_id,
             "server_id": server_id,
+            "current_time": float(self.current_time),
             "workflow_arrival_time": float(workflow_state["arrival_time"]),
             "workflow_absolute_deadline": float(workflow_absolute_deadline),
             "workflow_relative_deadline": float(workflow_relative_deadline),
             "estimated_ast": float(plan_rho1["ast"]),
             "execution_time_rho_1": execution_time_rho_1,
+            "task_reliability_rho_1": float(plan_rho1["reliability"]),
             "task_latest_finish_time": float(task_latest_finish_time),
             "safe_execution_budget": float(safe_execution_budget),
             "rho_hardware_min": float(rho_hardware_min),
@@ -283,14 +312,93 @@ class EdgeCloudWorkflowEnv:
             "low_action_feasible": bool(low_action_feasible),
         }
 
+    def build_hierarchical_decision_context(self, workflow_id, task_id) -> dict:
+        """构建分层 PPO 共用的安全决策元数据，不改变网络状态向量。"""
+        workflow_id = str(workflow_id)
+        task_id = int(task_id)
+        server_count = len(self.servers)
+        if server_count <= 0:
+            raise RuntimeError("Cannot build decision context without servers.")
+
+        primary_server_mask = np.zeros(server_count, dtype=bool)
+        server_safety_metrics = {}
+        server_energy_refs = []
+
+        for index, server in enumerate(self.servers):
+            server_id = int(server["id"])
+            metrics = self.compute_low_safety_metrics(workflow_id, task_id, server_id)
+            low_action_feasible = bool(metrics["low_action_feasible"])
+            # Structural action mask only: every real server is selectable.
+            # Deadline/reliability feasibility is diagnostic and reward-only.
+            primary_server_mask[index] = True
+            primary_energy_ref_rho1 = float(
+                self.estimate_primary_energy_ref_rho1(
+                    {
+                        "workflow_id": workflow_id,
+                        "task_id": task_id,
+                        "server_id": server_id,
+                        "rho": 1.0,
+                    }
+                )
+            )
+            if primary_energy_ref_rho1 > 0.0 and math.isfinite(primary_energy_ref_rho1):
+                server_energy_refs.append(primary_energy_ref_rho1)
+            rho_deadline_required = metrics.get("rho_deadline_required")
+            server_safety_metrics[str(server_id)] = {
+                "server_id": server_id,
+                "rho_safe": float(metrics["rho_safe"]),
+                "rho_deadline": (
+                    None
+                    if rho_deadline_required is None or not math.isfinite(float(rho_deadline_required))
+                    else float(rho_deadline_required)
+                ),
+                "rho_reliability": None,
+                "low_action_feasible": low_action_feasible,
+                "estimated_ast": float(metrics["estimated_ast"]),
+                "execution_time_rho_1": float(metrics["execution_time_rho_1"]),
+                "task_reliability_rho_1": float(metrics["task_reliability_rho_1"]),
+                "safe_execution_budget": float(metrics["safe_execution_budget"]),
+                "task_latest_finish_time": float(metrics["task_latest_finish_time"]),
+                "current_time": float(metrics["current_time"]),
+                "workflow_relative_deadline": float(metrics["workflow_relative_deadline"]),
+                "workflow_absolute_deadline": float(metrics["workflow_absolute_deadline"]),
+                "primary_energy_ref_rho1": primary_energy_ref_rho1,
+                **self._server_history_metrics(server_id),
+            }
+
+        if not server_energy_refs:
+            raise RuntimeError(
+                f"No positive primary energy reference for workflow={workflow_id}, task={task_id}."
+            )
+        task_energy_scale = float(np.median(np.asarray(server_energy_refs, dtype=np.float64)))
+
+        backup_pair_mask = np.zeros((server_count, server_count), dtype=bool)
+        if self.enable_backup_duplication:
+            for primary_index in range(server_count):
+                for backup_index in range(server_count):
+                    backup_pair_mask[primary_index, backup_index] = (
+                        bool(primary_server_mask[primary_index])
+                        and backup_index != primary_index
+                    )
+
+        return {
+            "workflow_id": workflow_id,
+            "task_id": task_id,
+            "primary_server_mask": primary_server_mask,
+            "backup_pair_mask": backup_pair_mask,
+            "backup_enabled": bool(self.enable_backup_duplication),
+            "server_safety_metrics": server_safety_metrics,
+            "task_energy_scale": task_energy_scale,
+            "primary_server_mask_mode": "structural_only",
+            "shield_relaxed": False,
+            "shield_relaxation_reason": None,
+        }
+
     def _estimate_final_download_time_if_exit(self, workflow_state, task_id, server):
-        children = self._child_task_ids(workflow_state["workflow"], task_id)
-        if children:
-            return 0.0
-        output_data_mb = self._workflow_io_mb(workflow_state["workflow"], "output_data_mb")
-        if output_data_mb <= 0.0:
-            return 0.0
-        return float(compute_transfer_time(output_data_mb, self._server_bandwidth(server)))
+        # The scheduling boundary ends when the exit task finishes. IoT result
+        # delivery is outside the model, so no final download consumes slack.
+        del workflow_state, task_id, server
+        return 0.0
 
     def _child_task_ids(self, workflow, task_id):
         task_id = int(task_id)
@@ -317,7 +425,13 @@ class EdgeCloudWorkflowEnv:
                     break
                 continue
 
-            action = scheduler.select_action(state)
+            if isinstance(scheduler, HEFTScheduler):
+                action = scheduler.select_action(
+                    state,
+                    context_builder=self.build_hierarchical_decision_context,
+                )
+            else:
+                action = scheduler.select_action(state)
             self._trace_schedule_decision(state, action)
             self.step(action)
             steps += 1
@@ -618,6 +732,7 @@ class EdgeCloudWorkflowEnv:
             self.update_server_timeline(backup_server, backup_plan, "backup")
             self._set_server_backup_available_time(backup_server, backup_plan["aft"])
             self._set_server_execution_available_time(backup_server, backup_plan["aft"])
+        self._update_server_history_stats(primary_plan, backup_plan)
 
         workflow_state["task_status"][task_id] = "running"
         workflow_state["task_start_times"][task_id] = primary_plan["ast"]
@@ -795,34 +910,14 @@ class EdgeCloudWorkflowEnv:
         if workflow_state.get("egress_applied"):
             return
 
-        workflow = workflow_state["workflow"]
-        output_data_mb = self._workflow_io_mb(workflow, "output_data_mb")
         compute_finish = max(workflow_state["task_finish_times"].values())
-
-        if output_data_mb <= 0:
-            workflow_state["download_time"] = 0.0
-            workflow_state["egress_finish_time"] = compute_finish
-            workflow_state["egress_applied"] = True
-            return
-
-        exit_task_ids = get_exit_tasks(workflow)
-        last_exit_task = max(
-            exit_task_ids,
-            key=lambda task_id: workflow_state["task_finish_times"][task_id],
-        )
-        exit_server = self._get_server(int(workflow_state["task_server"][last_exit_task]))
-        download_time = compute_transfer_time(
-            output_data_mb,
-            self._link_bandwidth(exit_server["type"], "iot"),
-        )
-        workflow_state["download_time"] = download_time
-        workflow_state["egress_finish_time"] = compute_finish + download_time
+        workflow_state["download_time"] = 0.0
+        workflow_state["egress_finish_time"] = compute_finish
         workflow_state["egress_applied"] = True
         self._trace(
             "EGRESS "
             f"workflow={workflow_state['workflow_id']} "
-            f"server={exit_server['type']} "
-            f"download={download_time:.6f} "
+            "download=0.000000 "
             f"finish={workflow_state['egress_finish_time']:.6f}"
         )
 
@@ -1033,6 +1128,51 @@ class EdgeCloudWorkflowEnv:
         observed_time = max(float(self.current_time), 1e-9)
         return min(1.0, max(0.0, self._server_busy_time(server) / observed_time))
 
+    def _server_history_metrics(self, server_id):
+        return dict(
+            self.server_history_stats.get(
+                int(server_id),
+                {
+                    "wait_time_ema": 0.0,
+                    "queued_processing_time_ema": 0.0,
+                    "queue_count_ema": 0.0,
+                    "recent_primary_assignments": 0.0,
+                    "recent_backup_assignments": 0.0,
+                },
+            )
+        )
+
+    def _update_server_history_stats(self, primary_plan, backup_plan):
+        alpha = self.server_history_ema_alpha
+        primary_server_id = int(primary_plan["server_id"])
+        backup_server_id = None if backup_plan is None else int(backup_plan["server_id"])
+        for server in self.servers:
+            server_id = int(server["id"])
+            stats = self.server_history_stats.setdefault(
+                server_id,
+                {
+                    "wait_time_ema": 0.0,
+                    "queued_processing_time_ema": 0.0,
+                    "queue_count_ema": 0.0,
+                    "recent_primary_assignments": 0.0,
+                    "recent_backup_assignments": 0.0,
+                },
+            )
+            wait_time = self._server_queue_load(server, queue_type="execution")
+            queue_count = self._server_queue_count(server, queue_type="execution")
+            stats["wait_time_ema"] = alpha * float(stats["wait_time_ema"]) + (1.0 - alpha) * float(wait_time)
+            stats["queued_processing_time_ema"] = (
+                alpha * float(stats["queued_processing_time_ema"])
+                + (1.0 - alpha) * float(wait_time)
+            )
+            stats["queue_count_ema"] = alpha * float(stats["queue_count_ema"]) + (1.0 - alpha) * float(queue_count)
+            stats["recent_primary_assignments"] = alpha * float(stats["recent_primary_assignments"]) + (
+                1.0 if server_id == primary_server_id else 0.0
+            )
+            stats["recent_backup_assignments"] = alpha * float(stats["recent_backup_assignments"]) + (
+                1.0 if backup_server_id is not None and server_id == backup_server_id else 0.0
+            )
+
     def update_server_timeline(self, server, replica_plan, role):
         server_id = int(server["id"])
         self.server_real_timeline.setdefault(server_id, []).append(
@@ -1116,16 +1256,11 @@ class EdgeCloudWorkflowEnv:
             edge_data_mb = workflow["edge_data_mb"]
 
         if not parents:
-            input_data_mb = self._workflow_io_mb(workflow, "input_data_mb")
-            upload_time = compute_transfer_time(
-                input_data_mb,
-                self._link_bandwidth("iot", target_server["type"]),
-            )
             return {
                 "dependency_ready_time": arrival_time,
-                "data_ready_time": arrival_time + upload_time,
+                "data_ready_time": arrival_time,
                 "transfer_time": 0.0,
-                "upload_time": upload_time,
+                "upload_time": 0.0,
                 "backup_path_uses_primary_fallback": False,
             }
 
@@ -1474,12 +1609,6 @@ class EdgeCloudWorkflowEnv:
             }
         )
         return event
-
-    def _workflow_io_mb(self, workflow, field: str) -> float:
-        default = self.default_input_data_mb if field == "input_data_mb" else self.default_output_data_mb
-        if isinstance(workflow, Workflow):
-            return float(getattr(workflow, field, default))
-        return float(workflow.get(field, default))
 
     def _normalize_rho(self, rho, server=None):
         if rho is None:

@@ -1,29 +1,19 @@
 from src.ppo.ppo import PPO, ActionDecision, Observation, StepContext, Transition
 from src.ppo.scheduler import PPOScheduler
-from src.ppo.dual_agent import (
-    AdjustmentAgent,
-    AdjustmentPPOAgent,
-    CenterAgent,
-    CenterPPOAgent,
-    DualPPOAgent,
-    HierarchicalPPOAgent,
-    HighLevelPPOAgent,
+from src.ppo.hierarchical_agent import (
+    HighLevelP3OAgent,
+    HierarchicalSafeAgent,
     LowLevelDVFSPPOAgent,
 )
-from src.ppo.dual_scheduler import DualPPOScheduler
+from src.schedulers.hierarchical_safe_scheduler import HierarchicalSafeScheduler
 
 __all__ = [
     "PPO",
     "PPOScheduler",
-    "HighLevelPPOAgent",
+    "HighLevelP3OAgent",
     "LowLevelDVFSPPOAgent",
-    "HierarchicalPPOAgent",
-    "CenterPPOAgent",
-    "AdjustmentPPOAgent",
-    "CenterAgent",
-    "AdjustmentAgent",
-    "DualPPOAgent",
-    "DualPPOScheduler",
+    "HierarchicalSafeAgent",
+    "HierarchicalSafeScheduler",
     "ActionDecision",
     "Observation",
     "StepContext",

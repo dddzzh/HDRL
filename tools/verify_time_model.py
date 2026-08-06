@@ -172,7 +172,13 @@ def test_reference_heft_makespan_diamond_dag():
 
 
 def test_server_no_overlap():
-    gen_cfg = {"num_workflows": 5, "mean_interarrival": 50.0, "min_tasks": 2, "max_tasks": 4}
+    gen_cfg = {
+        "path": "data",
+        "num_workflows": 5,
+        "dataset_scale": "small",
+        "arrival_process": "cai_2025_exponential",
+        "arrival_rate": 0.02,
+    }
     resources = load_resources(
         "configs/resources_edge_cloud_default.json",
         num_edge=2,
@@ -228,14 +234,11 @@ def test_server_fcfs_queue():
 
     first, second = env.event_log
     assert second["start_time"] >= first["finish_time"] - 1e-9
-    state = env.get_state()
-    assert state["servers"][0]["queue_count"] == 2
+    assert len(env.event_log) == 2
 
 
-def test_recr_ingress_egress():
-    """入口上传(I->E/I->C)与出口下载(E/C->I)使用 RECR 分层带宽。"""
-    from src.simulator.resource import compute_transfer_time
-
+def test_workflow_boundary_has_no_ingress_egress():
+    """IoT devices generate arrivals; ingress and egress are outside the model."""
     wf = Workflow(
         workflow_id="wf0",
         tasks=(Task(id=0, workload_cycles=1e9),),
@@ -250,27 +253,22 @@ def test_recr_ingress_egress():
         num_cloud=1,
         seed=0,
     )
-    links = resources["network"]["link_bandwidth_mbps"]
-
     env_edge = EdgeCloudWorkflowEnv([wf], resources, {}, seed=0)
     env_edge.step({"workflow_id": "wf0", "task_id": 0, "server_id": 0, "rho": 1.0})
-    expected_edge_upload = compute_transfer_time(8.0, links["iot_edge"])
-    assert abs(env_edge.workflow_by_id["wf0"]["upload_time"] - expected_edge_upload) < 1e-9
+    assert env_edge.workflow_by_id["wf0"]["upload_time"] == 0.0
 
     env_cloud = EdgeCloudWorkflowEnv([wf], resources, {}, seed=0)
     env_cloud.step({"workflow_id": "wf0", "task_id": 0, "server_id": 1, "rho": 1.0})
-    expected_cloud_upload = compute_transfer_time(8.0, links["iot_cloud"])
-    assert abs(env_cloud.workflow_by_id["wf0"]["upload_time"] - expected_cloud_upload) < 1e-9
-    assert expected_cloud_upload > expected_edge_upload
+    assert env_cloud.workflow_by_id["wf0"]["upload_time"] == 0.0
 
     while not env_cloud.workflow_by_id["wf0"]["completed"]:
         if not env_cloud._advance_to_next_decision_point():
             break
 
     ws = env_cloud.workflow_by_id["wf0"]
-    expected_download = compute_transfer_time(8.0, links["cloud_iot"])
     assert ws["egress_applied"]
-    assert abs(ws["download_time"] - expected_download) < 1e-9
+    assert ws["download_time"] == 0.0
+    assert ws["egress_finish_time"] == ws["task_finish_times"][0]
 
 
 if __name__ == "__main__":
@@ -286,12 +284,12 @@ if __name__ == "__main__":
     print("OK: chain unlocks after finish")
     test_late_arrival_while_first_running()
     print("OK: late arrival while first running")
-    test_t_ef_min_diamond_dag()
-    print("OK: t_ef_min diamond dag")
+    test_reference_heft_makespan_diamond_dag()
+    print("OK: reference HEFT makespan diamond dag")
     test_server_no_overlap()
     print("OK: server no overlap")
     test_server_fcfs_queue()
     print("OK: server fcfs queue")
-    test_recr_ingress_egress()
-    print("OK: recr ingress egress")
+    test_workflow_boundary_has_no_ingress_egress()
+    print("OK: workflow boundary excludes ingress and egress")
     print("\nAll DES checks passed.")

@@ -1,0 +1,21 @@
+{
+  "algorithm": "sac",
+  "gamma": 0.99,
+  "tau": 0.005,
+  "learning_rate": 0.0003,
+  "alpha": 0.2,
+  "automatic_entropy_tuning": true,
+  "target_entropy_scale": 0.98,
+  "hidden_dim": 256,
+  "hidden_layers": 2,
+  "batch_size": 256,
+  "replay_size": 100000,
+  "max_grad_norm": 1.0,
+  "device": "auto",
+  "max_rho_levels": 6,
+  "state": {
+    "max_ready_tasks": 32,
+    "max_servers": 16
+  },
+  "reward": {}
+}

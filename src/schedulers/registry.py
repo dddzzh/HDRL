@@ -30,10 +30,10 @@ def _load_recr_ppo_scheduler():
     return RECRPPOScheduler
 
 
-def _load_dual_ppo_scheduler():
-    from src.ppo.dual_scheduler import DualPPOScheduler
+def _load_hierarchical_safe_scheduler():
+    from src.schedulers.hierarchical_safe_scheduler import HierarchicalSafeScheduler
 
-    return DualPPOScheduler
+    return HierarchicalSafeScheduler
 
 
 def create_scheduler(name, params=None, seed=42):
@@ -46,8 +46,8 @@ def create_scheduler(name, params=None, seed=42):
     if name == "recr_ppo":
         scheduler_cls = _load_recr_ppo_scheduler()
         return scheduler_cls(params=params, seed=seed)
-    if name in ("dual_ppo", "center_adjust_ppo"):
-        scheduler_cls = _load_dual_ppo_scheduler()
+    if name == "hierarchical_safe_ppo":
+        scheduler_cls = _load_hierarchical_safe_scheduler()
         return scheduler_cls(params=params, seed=seed)
 
     if name not in SCHEDULER_REGISTRY:
@@ -58,8 +58,7 @@ def create_scheduler(name, params=None, seed=42):
                     "a2c",
                     "ppo",
                     "recr_ppo",
-                    "dual_ppo",
-                    "center_adjust_ppo",
+                    "hierarchical_safe_ppo",
                 ]
             )
         )

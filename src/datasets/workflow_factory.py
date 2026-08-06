@@ -33,6 +33,7 @@ import numpy as np
 
 from src.datasets.alibaba_dataset import AlibabaWorkflowDataset
 from src.datasets.arrival_process import (
+    CAI_2025_ARRIVAL_PROCESS,
     DEFAULT_POISSON_ARRIVAL_RATE,
     resolve_arrival_rate,
     sample_configured_arrivals,
@@ -301,8 +302,8 @@ class WorkflowSampler:
         self.pool = pool
         arrival_config = dict(mapping_config or {})
         arrival_config.setdefault("arrival_rate", arrival_rate)
-        arrival_config["arrival_process"] = "multi_device_poisson"
-        self.arrival_process = "multi_device_poisson"
+        arrival_config.setdefault("arrival_process", CAI_2025_ARRIVAL_PROCESS)
+        self.arrival_process = str(arrival_config["arrival_process"])
         self.arrival_rate = resolve_arrival_rate(arrival_config)
         self.start_time = float(start_time)
         self.arrival_config = arrival_config
