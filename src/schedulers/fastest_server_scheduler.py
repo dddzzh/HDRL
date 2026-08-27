@@ -9,10 +9,7 @@ class FastestServerScheduler(BaseScheduler):
         if not state["servers"]:
             raise ValueError("Fastest scheduler received empty server list")
 
-        task = sorted(
-            state["ready_tasks"],
-            key=lambda item: (item["arrival_time"], item["workflow_id"], item["task_id"]),
-        )[0]
+        task = state["ready_tasks"][0]
         server = sorted(
             state["servers"],
             key=lambda item: (-get_actual_freq_hz(item, 1.0), item["id"]),

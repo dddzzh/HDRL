@@ -6,10 +6,9 @@ class FCFSScheduler(BaseScheduler):
         if not state["ready_tasks"]:
             raise ValueError("FCFS scheduler received empty ready task queue")
 
-        task = sorted(
-            state["ready_tasks"],
-            key=lambda item: (item["arrival_time"], item["workflow_id"], item["task_id"]),
-        )[0]
+        # The environment owns the common task-dispatch order (for example
+        # UpRank).  This baseline only applies FCFS to server availability.
+        task = state["ready_tasks"][0]
         server = sorted(
             state["servers"],
             key=lambda item: (item["available_time"], item["id"]),

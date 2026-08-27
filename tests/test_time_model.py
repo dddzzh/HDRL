@@ -95,6 +95,28 @@ def mark_parent_finished(state, task_id, finish_time, server_id):
 
 
 class TimeModelTests(unittest.TestCase):
+    def test_ready_queue_can_use_upward_rank_instead_of_smallest_workload(self):
+        workflow = Workflow(
+            workflow_id="wf",
+            arrival_time=0.0,
+            absolute_deadline=1000.0,
+            tasks=(
+                Task(0, workload_cycles=20.0),
+                Task(1, workload_cycles=100.0),
+                Task(2, workload_cycles=1.0),
+            ),
+            edges=(DependencyEdge(0, 1, 0.0),),
+        )
+
+        uprank_env, _ = make_env(workflow, {"ready_task_order": "upward_rank"})
+        sjf_env, _ = make_env(workflow, {"ready_task_order": "smallest_workload"})
+
+        uprank_ready = uprank_env._get_ready_tasks()
+        sjf_ready = sjf_env._get_ready_tasks()
+        self.assertEqual(uprank_ready[0]["task_id"], 0)
+        self.assertGreater(uprank_ready[0]["upward_rank"], uprank_ready[1]["upward_rank"])
+        self.assertEqual(sjf_ready[0]["task_id"], 2)
+
     def test_ast_never_goes_before_current_time(self):
         workflow = Workflow(
             workflow_id="wf",

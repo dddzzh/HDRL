@@ -9,6 +9,13 @@ import numpy as np
 
 from src.a2c.a2c import _require_torch
 from src.device_utils import resolve_agent_device
+from src.shared.hierarchical_state_reward import (
+    SharedHierarchicalReward,
+    compose_fixed_lambda_upper_reward,
+    compose_upper_deadline_energy_reward,
+    compute_dvfs_reward_components,
+    low_reliability_counterfactual_cost,
+)
 
 try:
     import torch
@@ -67,6 +74,13 @@ class OOReplayBuffer:
         self.states = np.zeros((self.max_size, self.state_dim), dtype=np.float32)
         self.actions = np.zeros((self.max_size, self.action_dim), dtype=np.float32)
         self.rewards = np.zeros(self.max_size, dtype=np.float32)
+        self.deadline_rewards = np.zeros(self.max_size, dtype=np.float32)
+        self.energy_savings = np.zeros(self.max_size, dtype=np.float32)
+        self.slack_time_costs = np.zeros(self.max_size, dtype=np.float32)
+        self.deadline_violation_deltas = np.zeros(self.max_size, dtype=np.float32)
+        self.reliability_violation_deltas = np.zeros(
+            self.max_size, dtype=np.float32
+        )
         self.next_states = np.zeros((self.max_size, self.state_dim), dtype=np.float32)
         self.dones = np.zeros(self.max_size, dtype=bool)
 
@@ -77,7 +91,20 @@ class OOReplayBuffer:
     def ready(self):
         return self.size >= self.batch_size
 
-    def store(self, state, action, reward, next_state, done):
+    def store(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        done,
+        *,
+        deadline_reward=None,
+        energy_saving=0.0,
+        slack_time_cost=0.0,
+        deadline_violation_delta=0.0,
+        reliability_violation_delta=0.0,
+    ):
         index = self.mem_count % self.max_size
         self.states[index] = np.asarray(state, dtype=np.float32)
         action_array = np.asarray(action, dtype=np.float32)
@@ -89,6 +116,15 @@ class OOReplayBuffer:
             raise ValueError("OO replay actions must be binary.")
         self.actions[index] = action_array
         self.rewards[index] = float(reward)
+        self.deadline_rewards[index] = float(
+            reward if deadline_reward is None else deadline_reward
+        )
+        self.energy_savings[index] = float(energy_saving)
+        self.slack_time_costs[index] = float(slack_time_cost)
+        self.deadline_violation_deltas[index] = float(deadline_violation_delta)
+        self.reliability_violation_deltas[index] = float(
+            reliability_violation_delta
+        )
         self.next_states[index] = np.asarray(next_state, dtype=np.float32)
         self.dones[index] = bool(done)
         self.mem_count += 1
@@ -100,10 +136,34 @@ class OOReplayBuffer:
         return (
             self.states[indices],
             self.actions[indices],
-            self.rewards[indices],
+            self.deadline_rewards[indices],
+            self.energy_savings[indices],
+            self.slack_time_costs[indices],
+            self.deadline_violation_deltas[indices],
+            self.reliability_violation_deltas[indices],
             self.next_states[indices],
             self.dones[indices],
         )
+
+    def energy_statistics(self, std_floor=0.05):
+        return self.component_statistics(self.energy_savings, std_floor)
+
+    def slack_time_statistics(self, std_floor=0.005):
+        return self.component_statistics(self.slack_time_costs, std_floor)
+
+    def component_statistics(self, source, std_floor):
+        values = source[: self.size].astype(np.float64, copy=False)
+        if values.size < 2:
+            return {
+                "count": int(values.size),
+                "mean": 0.0,
+                "std": max(float(std_floor), EPS),
+            }
+        return {
+            "count": int(values.size),
+            "mean": float(values.mean(dtype=np.float64)),
+            "std": float(max(values.std(dtype=np.float64), float(std_floor))),
+        }
 
     def state_dict(self):
         return {
@@ -115,6 +175,11 @@ class OOReplayBuffer:
             "states": self.states,
             "actions": self.actions,
             "rewards": self.rewards,
+            "deadline_rewards": self.deadline_rewards,
+            "energy_savings": self.energy_savings,
+            "slack_time_costs": self.slack_time_costs,
+            "deadline_violation_deltas": self.deadline_violation_deltas,
+            "reliability_violation_deltas": self.reliability_violation_deltas,
             "next_states": self.next_states,
             "dones": self.dones,
         }
@@ -130,6 +195,23 @@ class OOReplayBuffer:
             source = np.asarray(payload[name])
             if target.shape != source.shape:
                 raise ValueError(f"OO replay {name} shape mismatch: {source.shape} != {target.shape}.")
+            target[:] = source
+        for name, fallback in (
+            ("deadline_rewards", self.rewards),
+            ("energy_savings", None),
+            ("slack_time_costs", None),
+            ("deadline_violation_deltas", None),
+            ("reliability_violation_deltas", None),
+        ):
+            target = getattr(self, name)
+            if name not in payload:
+                target[:] = fallback if fallback is not None else 0.0
+                continue
+            source = np.asarray(payload[name])
+            if target.shape != source.shape:
+                raise ValueError(
+                    f"OO replay {name} shape mismatch: {source.shape} != {target.shape}."
+                )
             target[:] = source
 
 
@@ -198,14 +280,69 @@ class OOActorCriticAgent:
         # The paper says "random bit perturbations" but does not report a
         # probability. Keep this reproducibility choice explicit in config.
         self.bit_flip_probability = float(config.get("bit_flip_probability", 0.2))
+        self.random_warmup_transitions = int(
+            config.get("random_warmup_transitions", 0)
+        )
         self.gamma = float(config.get("gamma", 0.99))
         self.tau = float(config.get("tau", 0.005))
         self.target_update_interval = int(config.get("target_update_interval", 3))
         self.learning_rate = float(config.get("learning_rate", 5e-4))
         self.training_per_episode = int(config.get("training_per_episode", 10))
         self.max_grad_norm = float(config.get("max_grad_norm", 1.0))
+        self.reward_mode = str(
+            config.get("reward_mode", "legacy_deadline_energy")
+        ).strip().lower()
+        if self.reward_mode not in {
+            "legacy_deadline_energy",
+            "shared_hierarchical_v1",
+            "shared_upper_same_server_energy_v2",
+            "fixed_lambda_upper_v1",
+            "hierarchical_fixed_lambda_v2",
+        }:
+            raise ValueError(f"Unsupported OO reward_mode: {self.reward_mode!r}.")
+        self.shared_reward = (
+            SharedHierarchicalReward(config)
+            if self.reward_mode in {
+                "shared_hierarchical_v1",
+                "shared_upper_same_server_energy_v2",
+                "hierarchical_fixed_lambda_v2",
+            }
+            else None
+        )
+        self.energy_reward_weight = float(
+            config.get(
+                "energy_reward_weight",
+                0.0
+                if self.shared_reward is None
+                else self.shared_reward.joint_low_reward_weight,
+            )
+        )
+        self.energy_std_floor = float(
+            config.get(
+                "energy_std_floor",
+                0.05 if self.shared_reward is None else self.shared_reward.energy_std_floor,
+            )
+        )
+        self.slack_time_std_floor = float(
+            config.get(
+                "slack_time_std_floor",
+                0.005
+                if self.shared_reward is None
+                else self.shared_reward.slack_time_std_floor,
+            )
+        )
+        if self.energy_reward_weight < 0.0:
+            raise ValueError("OO energy_reward_weight must be non-negative.")
+        if self.energy_std_floor <= 0.0:
+            raise ValueError("OO energy_std_floor must be positive.")
+        if self.slack_time_std_floor <= 0.0:
+            raise ValueError("OO slack_time_std_floor must be positive.")
+        self._checkpoint_energy_statistics = None
+        self._checkpoint_reward_statistics = None
         if self.num_candidates <= 0 or self.top_s <= 0:
             raise ValueError("OO num_candidates and top_s must be positive.")
+        if self.random_warmup_transitions < 0:
+            raise ValueError("OO random_warmup_transitions must be non-negative.")
         if self.top_s > self.num_candidates:
             raise ValueError("OO top_s cannot exceed num_candidates.")
         if not 0.0 < self.bit_flip_probability < 1.0:
@@ -292,6 +429,44 @@ class OOActorCriticAgent:
         with torch.no_grad():
             probabilities = self.actor(state_tensor).squeeze(0).cpu().numpy()
         preliminary_bits = (probabilities >= 0.5).astype(np.float32)
+        if (
+            not deterministic
+            and self.replay.size < self.random_warmup_transitions
+        ):
+            valid_indices = np.flatnonzero(
+                valid_mask[self._all_pairs[:, 0]]
+            )
+            selected_index = int(self.rng.choice(valid_indices))
+            server_index, frequency_index = self._all_pairs[selected_index]
+            selected_bits = self._all_bits[selected_index].copy()
+            action_tensor = torch.as_tensor(
+                selected_bits, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
+            with torch.no_grad():
+                q_value = float(self.critic(state_tensor, action_tensor).item())
+            exact_score = float(
+                exact_score_fn(int(server_index), int(frequency_index))
+            )
+            return {
+                "state": state_array,
+                "action_bits": selected_bits,
+                "server_index": int(server_index),
+                "frequency_index": int(frequency_index),
+                "rho": float(self.rho_levels[int(frequency_index)]),
+                "q_value": q_value,
+                "exact_score": exact_score,
+                "actor_probabilities": probabilities.astype(np.float32),
+                "preliminary_action_bits": preliminary_bits,
+                "preliminary_projected_action": self._all_pairs[
+                    selected_index
+                ].copy(),
+                "candidate_count": int(valid_indices.size),
+                "top_s_count": 0,
+                "selected_hamming_distance": int(
+                    np.abs(selected_bits - preliminary_bits).sum()
+                ),
+                "random_warmup": True,
+            }
         candidate_indices, projected_index = self._candidate_indices(
             preliminary_bits,
             probabilities,
@@ -319,11 +494,12 @@ class OOActorCriticAgent:
                 (
                     exact_score,
                     float(q_values[int(position)]),
+                    float(self.rho_levels[int(frequency_index)]),
                     -int(global_index),
                     int(global_index),
                 )
             )
-        _, q_value, _, selected_index = max(finalists)
+        _, q_value, _, _, selected_index = max(finalists)
         server_index, frequency_index = self._all_pairs[selected_index]
         selected_bits = self._all_bits[selected_index].copy()
         selected_score = max(finalists)[0]
@@ -343,6 +519,7 @@ class OOActorCriticAgent:
             "selected_hamming_distance": int(
                 np.abs(selected_bits - preliminary_bits).sum()
             ),
+            "random_warmup": False,
         }
 
     def _candidate_indices(
@@ -403,6 +580,76 @@ class OOActorCriticAgent:
             chosen.update(int(index) for index in sampled)
         return np.asarray(sorted(chosen), dtype=np.int64), projected_index
 
+    def energy_statistics(self):
+        statistics = self.replay.energy_statistics(self.energy_std_floor)
+        if statistics["count"] >= 2:
+            return statistics
+        if self._checkpoint_energy_statistics is not None:
+            return dict(self._checkpoint_energy_statistics)
+        return statistics
+
+    def energy_zscore(self, energy_saving, statistics=None):
+        statistics = dict(statistics or self.energy_statistics())
+        if int(statistics.get("count", 0)) < 2:
+            return 0.0
+        return (
+            float(energy_saving) - float(statistics["mean"])
+        ) / max(float(statistics["std"]), self.energy_std_floor)
+
+    def reward_statistics(self):
+        statistics = {
+            "energy": self.replay.energy_statistics(self.energy_std_floor),
+            "slack_time": self.replay.slack_time_statistics(
+                self.slack_time_std_floor
+            ),
+        }
+        if (
+            statistics["energy"]["count"] >= 2
+            and statistics["slack_time"]["count"] >= 2
+        ):
+            return statistics
+        if self._checkpoint_reward_statistics is not None:
+            result = copy.deepcopy(self._checkpoint_reward_statistics)
+            for name in ("energy", "slack_time"):
+                if statistics[name]["count"] >= 2:
+                    result[name] = statistics[name]
+            return result
+        return statistics
+
+    def compose_reward(
+        self,
+        deadline_reward,
+        energy_saving,
+        statistics=None,
+        *,
+        slack_time_cost=0.0,
+        deadline_violation_delta=0.0,
+        reliability_violation_delta=0.0,
+    ):
+        if self.reward_mode == "shared_upper_same_server_energy_v2":
+            rewards = deadline_rewards.astype(np.float32, copy=True)
+            statistics = self.energy_statistics()
+            slack_statistics = self.reward_statistics()["slack_time"]
+        elif self.shared_reward is not None:
+            result = self.shared_reward.compose(
+                deadline_reward,
+                energy_saving=energy_saving,
+                slack_time_cost=slack_time_cost,
+                deadline_violation_delta=deadline_violation_delta,
+                reliability_violation_delta=reliability_violation_delta,
+                statistics=statistics or self.reward_statistics(),
+            )
+            return {**result, "deadline_reward": float(deadline_reward)}
+        energy_zscore = self.energy_zscore(energy_saving, statistics)
+        energy_reward = self.energy_reward_weight * energy_zscore
+        return {
+            "reward": float(deadline_reward) + float(energy_reward),
+            "deadline_reward": float(deadline_reward),
+            "energy_saving": float(energy_saving),
+            "energy_zscore": float(energy_zscore),
+            "energy_reward": float(energy_reward),
+        }
+
     def remember_from_high_buffer(self, high_buffer, deadline_cost_reward_weight=1.0):
         if high_buffer.size == 0:
             return {"stored_transitions": 0.0, "deadline_reward_penalty_total": 0.0}
@@ -412,13 +659,54 @@ class OOActorCriticAgent:
         for index in range(high_buffer.size):
             info = high_buffer.infos[index]
             action_bits = np.asarray(info["oo_action_bits"], dtype=np.float32)
-            deadline_limit = max(float(high_buffer.deadline_limits[index]), EPS)
-            deadline_penalty = (
-                float(deadline_cost_reward_weight)
-                * float(high_buffer.deadline_costs[index])
-                / deadline_limit
-            )
-            replay_reward = float(high_buffer.rewards[index]) - deadline_penalty
+            if "oo_energy_saving_joules" in info:
+                deadline_penalty = 0.0
+                replay_reward = float(high_buffer.rewards[index])
+                if info.get("oo_reward_mode") in {
+                    "shared_upper_same_server_energy_v2",
+                    "fixed_lambda_upper_v1",
+                }:
+                    # This mode has no replay-dependent normalization, so the
+                    # executed full scalar reward is already the training target.
+                    deadline_reward = replay_reward
+                    slack_time_cost = 0.0
+                    deadline_violation_delta = 0.0
+                    reliability_violation_delta = 0.0
+                elif info.get("oo_reward_mode") in {
+                    "shared_hierarchical_v1",
+                    "hierarchical_fixed_lambda_v2",
+                }:
+                    deadline_reward = replay_reward - float(
+                        info.get("oo_weighted_low_reward", 0.0)
+                    )
+                    slack_time_cost = float(info.get("oo_slack_time_cost", 0.0))
+                    deadline_violation_delta = float(
+                        info.get("oo_deadline_violation_delta", 0.0)
+                    )
+                    reliability_violation_delta = float(
+                        info.get("oo_reliability_violation_delta", 0.0)
+                    )
+                else:
+                    deadline_reward = replay_reward - float(
+                        info.get("oo_energy_reward", 0.0)
+                    )
+                    slack_time_cost = 0.0
+                    deadline_violation_delta = 0.0
+                    reliability_violation_delta = 0.0
+                energy_saving = float(info["oo_energy_saving_joules"])
+            else:
+                deadline_limit = max(float(high_buffer.deadline_limits[index]), EPS)
+                deadline_penalty = (
+                    float(deadline_cost_reward_weight)
+                    * float(high_buffer.deadline_costs[index])
+                    / deadline_limit
+                )
+                replay_reward = float(high_buffer.rewards[index]) - deadline_penalty
+                deadline_reward = replay_reward
+                energy_saving = 0.0
+                slack_time_cost = 0.0
+                deadline_violation_delta = 0.0
+                reliability_violation_delta = 0.0
             done = index == high_buffer.size - 1
             next_state = zero_state if done else high_buffer.states[index + 1]
             self.replay.store(
@@ -427,12 +715,27 @@ class OOActorCriticAgent:
                 replay_reward,
                 next_state,
                 done,
+                deadline_reward=deadline_reward,
+                energy_saving=energy_saving,
+                slack_time_cost=slack_time_cost,
+                deadline_violation_delta=deadline_violation_delta,
+                reliability_violation_delta=reliability_violation_delta,
             )
             penalty_total += deadline_penalty
             stored += 1
+        energy_statistics = self.energy_statistics()
+        reward_statistics = self.reward_statistics()
         return {
             "stored_transitions": float(stored),
             "deadline_reward_penalty_total": float(penalty_total),
+            "energy_replay_mean": float(energy_statistics["mean"]),
+            "energy_replay_std": float(energy_statistics["std"]),
+            "slack_time_replay_mean": float(
+                reward_statistics["slack_time"]["mean"]
+            ),
+            "slack_time_replay_std": float(
+                reward_statistics["slack_time"]["std"]
+            ),
         }
 
     def update(self):
@@ -457,7 +760,60 @@ class OOActorCriticAgent:
         sample = self.replay.sample(self.rng)
         if sample is None:
             return {}
-        states, actions, rewards, next_states, dones = sample
+        (
+            states,
+            actions,
+            deadline_rewards,
+            energy_savings,
+            slack_time_costs,
+            deadline_violation_deltas,
+            reliability_violation_deltas,
+            next_states,
+            dones,
+        ) = sample
+        if self.reward_mode == "fixed_lambda_upper_v1":
+            # The full, already-scaled scalar reward is stored in the
+            # deadline_reward replay field for this non-normalized mode.
+            rewards = deadline_rewards.astype(np.float32, copy=True)
+            statistics = self.energy_statistics()
+            slack_statistics = {"mean": 0.0, "std": self.slack_time_std_floor}
+        elif self.shared_reward is not None:
+            reward_statistics = self.reward_statistics()
+            rewards = np.asarray(
+                [
+                    self.shared_reward.compose(
+                        deadline_reward,
+                        energy_saving=energy_saving,
+                        slack_time_cost=slack_time_cost,
+                        deadline_violation_delta=deadline_violation_delta,
+                        reliability_violation_delta=reliability_violation_delta,
+                        statistics=reward_statistics,
+                    )["reward"]
+                    for deadline_reward, energy_saving, slack_time_cost, deadline_violation_delta, reliability_violation_delta in zip(
+                        deadline_rewards,
+                        energy_savings,
+                        slack_time_costs,
+                        deadline_violation_deltas,
+                        reliability_violation_deltas,
+                    )
+                ],
+                dtype=np.float32,
+            )
+            statistics = reward_statistics["energy"]
+            slack_statistics = reward_statistics["slack_time"]
+        else:
+            statistics = self.energy_statistics()
+            if int(statistics["count"]) >= 2:
+                normalized_energy = (
+                    energy_savings.astype(np.float64) - float(statistics["mean"])
+                ) / max(float(statistics["std"]), self.energy_std_floor)
+            else:
+                normalized_energy = np.zeros_like(energy_savings, dtype=np.float64)
+            rewards = (
+                deadline_rewards.astype(np.float64)
+                + self.energy_reward_weight * normalized_energy
+            ).astype(np.float32)
+            slack_statistics = {"mean": 0.0, "std": self.slack_time_std_floor}
         states_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         actions_t = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         rewards_t = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
@@ -499,6 +855,10 @@ class OOActorCriticAgent:
             "actor_grad_norm_before_clip": float(actor_grad),
             "critic_grad_norm_before_clip": float(critic_grad),
             "actor_bit_mean": float(actor_probabilities.detach().mean().item()),
+            "energy_replay_mean": float(statistics["mean"]),
+            "energy_replay_std": float(statistics["std"]),
+            "slack_time_replay_mean": float(slack_statistics["mean"]),
+            "slack_time_replay_std": float(slack_statistics["std"]),
             "target_updated": float(target_updated),
         }
 
@@ -537,7 +897,10 @@ class OOActorCriticAgent:
             "rho_levels": self.rho_levels,
             "server_bits": self.server_bits,
             "frequency_bits": self.frequency_bits,
+            "reward_mode": self.reward_mode,
             "objective_state": dict(objective_state or {}),
+            "energy_reward_statistics": self.energy_statistics(),
+            "shared_reward_statistics": self.reward_statistics(),
             "episode": int(episode),
             "config": copy.deepcopy(config if config is not None else self.config),
             "numpy_rng_state": copy.deepcopy(self.rng.bit_generator.state),
@@ -556,6 +919,14 @@ class OOActorCriticAgent:
             raise ValueError("OO checkpoint server count mismatch.")
         if tuple(float(value) for value in payload["rho_levels"]) != self.rho_levels:
             raise ValueError("OO checkpoint rho levels mismatch.")
+        saved_reward_mode = str(
+            payload.get("reward_mode", "legacy_deadline_energy")
+        ).strip().lower()
+        if saved_reward_mode != self.reward_mode:
+            raise ValueError(
+                "OO checkpoint reward mode mismatch: "
+                f"checkpoint={saved_reward_mode}, current={self.reward_mode}."
+            )
         self.actor.load_state_dict(payload["actor_state_dict"])
         self.target_actor.load_state_dict(payload["target_actor_state_dict"])
         self.critic.load_state_dict(payload["critic_state_dict"])
@@ -565,6 +936,21 @@ class OOActorCriticAgent:
         self.update_steps = int(payload.get("update_steps", 0))
         if load_replay and payload.get("replay_state_dict") is not None:
             self.replay.load_state_dict(payload["replay_state_dict"])
+        saved_energy_statistics = payload.get("energy_reward_statistics")
+        if saved_energy_statistics is not None:
+            self._checkpoint_energy_statistics = {
+                "count": int(saved_energy_statistics.get("count", 0)),
+                "mean": float(saved_energy_statistics.get("mean", 0.0)),
+                "std": max(
+                    float(saved_energy_statistics.get("std", self.energy_std_floor)),
+                    self.energy_std_floor,
+                ),
+            }
+        saved_shared_statistics = payload.get("shared_reward_statistics")
+        if saved_shared_statistics is not None:
+            self._checkpoint_reward_statistics = copy.deepcopy(
+                saved_shared_statistics
+            )
         if payload.get("numpy_rng_state") is not None:
             self.rng.bit_generator.state = payload["numpy_rng_state"]
         return payload
@@ -578,13 +964,19 @@ def evaluate_upper_reward_candidate(
     server_id: int,
     rho: float,
     deadline_cost_reward_weight=1.0,
+    energy_reward_weight=0.0,
+    energy_statistics=None,
+    shared_reward=None,
+    shared_reward_mode=None,
+    reward_statistics=None,
 ):
     """Side-effect-free exact OO score using the current upper-level reward.
 
-    This mirrors ``HierarchicalObjective.compute_step_feedback`` and the extra
-    normalized deadline penalty applied when D3QN writes to replay. It is used
-    only for the paper's Top-s precise choosing stage; the executed transition
-    still obtains its training reward from the shared objective implementation.
+    The current mode mirrors the shared incremental Deadline reward and adds the
+    OO action's replay-normalized absolute energy saving. Legacy checkpoints keep
+    their historical weighted reward and extra normalized Deadline cost. This is
+    used only for the paper's Top-s precise choosing stage; the executed
+    transition remains the source of truth written to replay.
     """
 
     ready_tasks = tuple(state.get("ready_tasks", ()))
@@ -618,14 +1010,310 @@ def evaluate_upper_reward_candidate(
     current_makespan = max(0.0, max(finish_times) - float(workflow_state["arrival_time"]))
     makespan_increment = max(0.0, current_makespan - previous_makespan)
     current_slack_ratio = (deadline - current_makespan) / deadline
+    context = state.get("decision_context", {})
+    task_energy_scale = max(
+        float(context.get("task_energy_scale", primary_plan["energy"])), EPS
+    )
+
+    if objective.reward_mode == "deadline_incremental_only":
+        normalized_makespan_increment = makespan_increment / deadline
+        previous_violation = objective._deadline_violation_with_unit_jump(
+            previous_makespan, deadline
+        )
+        current_violation = objective._deadline_violation_with_unit_jump(
+            current_makespan, deadline
+        )
+        violation_delta = max(0.0, current_violation - previous_violation)
+        deadline_penalty = (
+            float(objective.deadline_incremental_violation_weight)
+            * violation_delta
+        )
+        deadline_reward = -normalized_makespan_increment - deadline_penalty
+        if shared_reward_mode == "hierarchical_fixed_lambda_v2":
+            reference_plan = (
+                primary_plan
+                if abs(float(normalized_rho) - 1.0) <= EPS
+                else env.estimate_replica_plan(
+                    task=task,
+                    server=server,
+                    rho=1.0,
+                    workflow_state=workflow_state,
+                    queue_type="execution",
+                    replica_role="primary",
+                )
+            )
+            high_components = compose_fixed_lambda_upper_reward(
+                normalized_makespan_increment=normalized_makespan_increment,
+                deadline_violation_delta=violation_delta,
+                energy_scale=task_energy_scale,
+                # The upper placement term evaluates the chosen server at
+                # rho=1, exactly as D3QN does before lower-level DVFS.
+                energy_actual=float(reference_plan["energy"]),
+                workflow_task_count=workflow_task_count,
+                fixed_deadline_lambda=objective.fixed_deadline_lambda,
+                fixed_deadline_miss_penalty=(
+                    objective.deadline_incremental_violation_weight
+                ),
+            )
+            dvfs_components = compute_dvfs_reward_components(
+                deadline=deadline,
+                partial_makespan_before=previous_makespan,
+                workflow_arrival_time=float(workflow_state["arrival_time"]),
+                reference_aft=float(reference_plan["aft"]),
+                actual_aft=float(primary_plan["aft"]),
+                reference_energy=float(reference_plan["energy"]),
+                actual_energy=float(primary_plan["energy"]),
+                slack_floor_ratio=shared_reward.slack_floor_ratio,
+            )
+            reliability_components = (
+                low_reliability_counterfactual_cost(
+                    env,
+                    workflow_state,
+                    task_id,
+                    reference_plan["reliability"],
+                    primary_plan["reliability"],
+                )
+                if shared_reward.low_reliability_violation_weight > 0.0
+                else {
+                    "reference_reliability_violation": 0.0,
+                    "actual_reliability_violation": 0.0,
+                    "reliability_violation_delta": 0.0,
+                    "reliability_crossed": 0.0,
+                }
+            )
+            composed = shared_reward.compose(
+                float(high_components["reward"]),
+                energy_saving=float(dvfs_components["energy_saving"]),
+                slack_time_cost=float(dvfs_components["slack_time_cost"]),
+                deadline_violation_delta=float(
+                    dvfs_components["deadline_constraint_cost"]
+                ),
+                reliability_violation_delta=float(
+                    reliability_components["reliability_violation_delta"]
+                ),
+                statistics=reward_statistics,
+            )
+            return {
+                **dvfs_components,
+                **reliability_components,
+                "replay_reward": float(composed["reward"]),
+                "high_reward": float(composed["reward"]),
+                "deadline_reward": float(high_components["deadline_reward"]),
+                "hierarchical_high_reward": float(high_components["reward"]),
+                "deadline_penalty": float(high_components["deadline_cost"]),
+                "current_makespan": float(current_makespan),
+                "makespan_increment": float(makespan_increment),
+                "normalized_makespan_increment": float(
+                    normalized_makespan_increment
+                ),
+                "deadline_violation": float(current_violation),
+                "deadline_violation_delta": float(
+                    dvfs_components["deadline_constraint_cost"]
+                ),
+                "energy_reference": float(reference_plan["energy"]),
+                "energy_saving": float(dvfs_components["energy_saving"]),
+                "energy_saving_ratio": float(
+                    dvfs_components["energy_saving_ratio"]
+                ),
+                "energy_reward": float(composed["energy_reward"]),
+                "placement_energy_reference": float(task_energy_scale),
+                "placement_energy_actual_rho1": float(reference_plan["energy"]),
+                "placement_energy_reward": float(
+                    high_components["energy_reward"]
+                ),
+                "rho": float(normalized_rho),
+                "energy": float(primary_plan["energy"]),
+                "aft": float(primary_plan["aft"]),
+                **{
+                    f"joint_{key}": value
+                    for key, value in composed.items()
+                    if key != "reward"
+                },
+            }
+        if shared_reward_mode == "fixed_lambda_upper_v1":
+            composed = compose_fixed_lambda_upper_reward(
+                normalized_makespan_increment=normalized_makespan_increment,
+                deadline_violation_delta=violation_delta,
+                energy_scale=task_energy_scale,
+                energy_actual=float(primary_plan["energy"]),
+                workflow_task_count=workflow_task_count,
+                fixed_deadline_lambda=objective.fixed_deadline_lambda,
+                fixed_deadline_miss_penalty=(
+                    objective.deadline_incremental_violation_weight
+                ),
+            )
+            return {
+                "replay_reward": float(composed["reward"]),
+                "high_reward": float(composed["reward"]),
+                "deadline_reward": float(composed["deadline_reward"]),
+                "deadline_penalty": float(composed["deadline_cost"]),
+                "current_makespan": float(current_makespan),
+                "makespan_increment": float(makespan_increment),
+                "normalized_makespan_increment": float(
+                    normalized_makespan_increment
+                ),
+                "deadline_violation": float(current_violation),
+                "deadline_violation_delta": float(violation_delta),
+                "energy_reference": float(composed["energy_scale"]),
+                "energy_saving": float(composed["energy_saving"]),
+                "energy_saving_ratio": float(
+                    composed["energy_saving_ratio"]
+                ),
+                "energy_reward": float(composed["energy_reward"]),
+                "fixed_deadline_lambda": float(
+                    composed["fixed_deadline_lambda"]
+                ),
+                "slack_time_cost": 0.0,
+                "rho": float(normalized_rho),
+                "energy": float(primary_plan["energy"]),
+                "aft": float(primary_plan["aft"]),
+            }
+        if shared_reward is not None:
+            reference_plan = (
+                primary_plan
+                if abs(float(normalized_rho) - 1.0) <= EPS
+                else env.estimate_replica_plan(
+                    task=task,
+                    server=server,
+                    rho=1.0,
+                    workflow_state=workflow_state,
+                    queue_type="execution",
+                    replica_role="primary",
+                )
+            )
+            components = compute_dvfs_reward_components(
+                deadline=deadline,
+                partial_makespan_before=previous_makespan,
+                workflow_arrival_time=float(workflow_state["arrival_time"]),
+                reference_aft=float(reference_plan["aft"]),
+                actual_aft=float(primary_plan["aft"]),
+                reference_energy=float(reference_plan["energy"]),
+                actual_energy=float(primary_plan["energy"]),
+                slack_floor_ratio=shared_reward.slack_floor_ratio,
+            )
+            reliability_components = (
+                low_reliability_counterfactual_cost(
+                    env,
+                    workflow_state,
+                    task_id,
+                    reference_plan["reliability"],
+                    primary_plan["reliability"],
+                )
+                if shared_reward.low_reliability_violation_weight > 0.0
+                else {
+                    "reference_reliability_violation": 0.0,
+                    "actual_reliability_violation": 0.0,
+                    "reliability_violation_delta": 0.0,
+                    "reliability_crossed": 0.0,
+                }
+            )
+            if shared_reward_mode == "shared_upper_same_server_energy_v2":
+                composed = compose_upper_deadline_energy_reward(
+                    normalized_makespan_increment=normalized_makespan_increment,
+                    deadline_violation_delta=violation_delta,
+                    energy_reference=float(reference_plan["energy"]),
+                    energy_actual=float(primary_plan["energy"]),
+                    workflow_task_count=workflow_task_count,
+                    deadline_violation_weight=(
+                        objective.deadline_incremental_violation_weight
+                    ),
+                    energy_weight=objective.high_energy_weight,
+                )
+                return {
+                    **components,
+                    "replay_reward": float(composed["reward"]),
+                    "high_reward": float(composed["reward"]),
+                    "deadline_reward": float(
+                        composed["time_reward"] - composed["deadline_penalty"]
+                    ),
+                    "deadline_penalty": float(composed["deadline_penalty"]),
+                    "current_makespan": float(current_makespan),
+                    "makespan_increment": float(makespan_increment),
+                    "normalized_makespan_increment": float(
+                        normalized_makespan_increment
+                    ),
+                    "deadline_violation": float(current_violation),
+                    "deadline_violation_delta": float(violation_delta),
+                    "energy_reference": float(composed["energy_reference"]),
+                    "energy_saving": float(composed["energy_saving"]),
+                    "energy_saving_ratio": float(
+                        composed["energy_saving_ratio"]
+                    ),
+                    "energy_reward": float(composed["energy_reward"]),
+                    "rho": float(normalized_rho),
+                    "energy": float(primary_plan["energy"]),
+                    "aft": float(primary_plan["aft"]),
+                }
+            composed = shared_reward.compose(
+                deadline_reward,
+                energy_saving=components["energy_saving"],
+                slack_time_cost=components["slack_time_cost"],
+                deadline_violation_delta=components["deadline_violation"],
+                reliability_violation_delta=(
+                    reliability_components["reliability_violation_delta"]
+                ),
+                statistics=reward_statistics,
+            )
+            return {
+                **components,
+                **reliability_components,
+                "replay_reward": float(composed["reward"]),
+                "high_reward": float(composed["reward"]),
+                "deadline_reward": float(deadline_reward),
+                "deadline_penalty": float(deadline_penalty),
+                "current_makespan": float(current_makespan),
+                "makespan_increment": float(makespan_increment),
+                "normalized_makespan_increment": float(
+                    normalized_makespan_increment
+                ),
+                "deadline_violation": float(current_violation),
+                "deadline_violation_delta": float(
+                    components["deadline_violation"]
+                ),
+                "rho": float(normalized_rho),
+                "energy": float(primary_plan["energy"]),
+                "aft": float(primary_plan["aft"]),
+                **{
+                    f"joint_{key}": value
+                    for key, value in composed.items()
+                    if key not in {"reward", "high_reward"}
+                },
+            }
+        energy_saving = task_energy_scale - float(primary_plan["energy"])
+        statistics = dict(energy_statistics or {})
+        if int(statistics.get("count", 0)) >= 2:
+            energy_zscore = (
+                energy_saving - float(statistics.get("mean", 0.0))
+            ) / max(float(statistics.get("std", 0.05)), EPS)
+        else:
+            energy_zscore = 0.0
+        energy_reward = float(energy_reward_weight) * energy_zscore
+        replay_reward = deadline_reward + energy_reward
+        return {
+            "replay_reward": float(replay_reward),
+            "high_reward": float(replay_reward),
+            "deadline_reward": float(deadline_reward),
+            "deadline_penalty": float(deadline_penalty),
+            "current_makespan": float(current_makespan),
+            "makespan_increment": float(makespan_increment),
+            "normalized_makespan_increment": float(normalized_makespan_increment),
+            "deadline_violation": float(current_violation),
+            "deadline_violation_delta": float(violation_delta),
+            "energy_reference": float(task_energy_scale),
+            "energy_saving": float(energy_saving),
+            "energy_zscore": float(energy_zscore),
+            "energy_reward": float(energy_reward),
+            "rho": float(normalized_rho),
+            "energy": float(primary_plan["energy"]),
+            "aft": float(primary_plan["aft"]),
+        }
+
     high_time_reward = (
         float(objective.high_makespan_weight)
         * current_slack_ratio
         / workflow_task_count
     )
 
-    context = state.get("decision_context", {})
-    task_energy_scale = max(float(context.get("task_energy_scale", primary_plan["energy"])), EPS)
     high_energy_reward_raw = (
         task_energy_scale - float(primary_plan["energy"])
     ) / task_energy_scale

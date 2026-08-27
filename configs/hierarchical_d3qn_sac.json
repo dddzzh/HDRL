@@ -11,6 +11,7 @@
     "num_cloud": 6
   },
   "simulation": {
+    "ready_task_order": "smallest_workload",
     "deadline_type": "medium",
     "workflow_reliability_requirement": 0.9,
     "default_rho": 1.0,
@@ -31,6 +32,16 @@
         "max_ready_tasks": 32
       }
     },
+    "shared_deadline_lagrangian": {
+      "enabled": false,
+      "deadline_budget": 0.01,
+      "deadline_lambda_init": 1.0,
+      "dual_learning_rate": 0.0005,
+      "lambda_max": 100.0,
+      "warmup_episodes": 50,
+      "window_workflows": 100,
+      "update_interval": "episode_end"
+    },
     "high": {
       "action_mode": "primary_only",
       "backup_selection": "disabled",
@@ -43,7 +54,23 @@
       "replay_size": 50000,
       "batch_size": 256,
       "training_per_episode": 10,
-      "deadline_cost_reward_weight": 1.5
+      "reward": {
+        "mode": "scalar",
+        "std_floor": 1.0,
+        "component_clip": 3.0,
+        "lagrangian_energy_normalization": "none"
+      },
+      "lagrangian": {
+        "enabled": true,
+        "constraint_metric": "workflow_miss_rate",
+        "deadline_budget": 0.01,
+        "deadline_lambda_init": 1.0,
+        "dual_learning_rate": 0.001,
+        "lambda_max": 100.0,
+        "warmup_episodes": 50,
+        "window_workflows": 100,
+        "update_interval": "episode_end"
+      }
     },
     "low": {
       "algorithm": "sac",
@@ -62,25 +89,39 @@
       "training_per_episode": 10,
       "max_grad_norm": 1.0,
       "reward": {
-        "energy_weight": 1.0,
-        "time_weight": 1.0,
-        "deadline_fixed_penalty": 5.0,
-        "deadline_severity_weight": 2.0,
-        "reliability_fixed_penalty": 5.0,
-        "reliability_severity_weight": 2.0,
+        "mode": "lagrangian_deadline",
+        "energy_weight": 2.0,
+        "slack_time_weight": 1.0,
+        "team_energy_weight": 0.0,
+        "slack_floor_ratio": 0.05,
         "component_clip": 3.0,
-        "std_floor": 0.05
+        "energy_std_floor": 0.05,
+        "slack_time_std_floor": 0.005,
+        "team_energy_std_floor": 0.01
+      },
+      "lagrangian": {
+        "enabled": true,
+        "constraint_metric": "workflow_miss_rate",
+        "deadline_budget": 0.0,
+        "deadline_lambda_init": 10.0,
+        "dual_learning_rate": 0.01,
+        "lambda_max": 100.0,
+        "warmup_episodes": 50,
+        "window_workflows": 100,
+        "update_interval": "episode_end"
       }
     }
   },
   "objective": {
-    "high_makespan_weight": 0.4,
-    "high_energy_weight": 0.6,
-    "high_reliability_fixed_penalty": 5.0,
-    "high_reliability_severity_weight": 2.0
+    "reward_mode": "lagrangian_deadline",
+    "reward_profile": "ep740_lagrangian_v1",
+    "deadline_violation_weight": 3.0,
+    "high_energy_weight": 1.0,
+    "team_energy_weight": 0.0
   },
   "training": {
     "seed": 42,
+    "torch_cpu_threads": 1,
     "training_mode": "joint",
     "total_episodes": 1500,
     "update_mode": "episode_end",

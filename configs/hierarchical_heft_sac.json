@@ -11,6 +11,7 @@
     "num_cloud": 6
   },
   "simulation": {
+    "ready_task_order": "smallest_workload",
     "deadline_type": "medium",
     "workflow_reliability_requirement": 0.9,
     "default_rho": 1.0,
@@ -63,13 +64,12 @@
       "max_grad_norm": 1.0,
       "reward": {
         "energy_weight": 1.0,
-        "time_weight": 1.0,
-        "deadline_fixed_penalty": 5.0,
-        "deadline_severity_weight": 2.0,
-        "reliability_fixed_penalty": 5.0,
-        "reliability_severity_weight": 2.0,
+        "slack_time_weight": 1.0,
+        "deadline_violation_weight": 5.0,
+        "slack_floor_ratio": 0.05,
         "component_clip": 3.0,
-        "std_floor": 0.05
+        "energy_std_floor": 0.05,
+        "slack_time_std_floor": 0.005
       }
     }
   },

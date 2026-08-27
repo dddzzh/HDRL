@@ -52,6 +52,25 @@ def describe_runtime_devices(agent_device) -> str:
     )
 
 
+def configure_torch_runtime(cpu_threads=1):
+    """Limit per-process Torch CPU pools for concurrent GPU experiments."""
+    _require_torch()
+    cpu_threads = int(cpu_threads)
+    if cpu_threads <= 0:
+        raise ValueError("torch cpu_threads must be positive.")
+    torch.set_num_threads(cpu_threads)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        # PyTorch permits setting inter-op threads only before parallel work
+        # starts. Staged training calls this once per phase in one process.
+        pass
+    return {
+        "torch_cpu_threads": int(torch.get_num_threads()),
+        "torch_interop_threads": int(torch.get_num_interop_threads()),
+    }
+
+
 def _require_torch() -> None:
     if torch is None:
         raise ImportError("PyTorch is required. Install it with: pip install torch")

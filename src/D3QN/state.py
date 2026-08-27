@@ -8,8 +8,8 @@ from src.a2c.a2c import Observation
 from src.simulator.resource import compute_execution_time
 
 
-TASK_FEATURE_DIM = 3
-SERVER_FEATURE_DIM = 21
+TASK_FEATURE_DIM = 4
+SERVER_FEATURE_DIM = 12
 GLOBAL_FEATURE_DIM = 5
 LOW_STATE_FEATURE_DIM = 9
 EPS = 1e-8
@@ -30,7 +30,7 @@ def first_present(mapping, keys, default=None):
 
 
 class HierarchicalStateEncoder:
-    """Deadline-relative state builder for hierarchical safe PPO."""
+    """Deadline-relative state builder for hierarchical D3QN + SAC."""
 
     def __init__(self, state_cfg=None):
         state_cfg = state_cfg or {}
@@ -49,6 +49,14 @@ class HierarchicalStateEncoder:
         )
 
     @property
+    def server_feature_dim(self):
+        return SERVER_FEATURE_DIM
+
+    @property
+    def global_feature_dim(self):
+        return GLOBAL_FEATURE_DIM
+
+    @property
     def low_state_dim(self):
         return LOW_STATE_FEATURE_DIM
 
@@ -58,6 +66,12 @@ class HierarchicalStateEncoder:
         current_time = safe_float(env_state.get("time", 0.0))
         context = env_state.get("decision_context", {})
         metrics_by_id = context.get("server_safety_metrics", {}) if isinstance(context, Mapping) else {}
+        task_energy_scale = max(
+            safe_float(context.get("task_energy_scale", 1.0), 1.0)
+            if isinstance(context, Mapping)
+            else 1.0,
+            EPS,
+        )
         max_server_freq_hz = self.max_server_freq_hz(servers)
 
         task_features = np.zeros((self.max_ready_tasks, TASK_FEATURE_DIM), dtype=np.float32)
@@ -77,6 +91,7 @@ class HierarchicalStateEncoder:
                 current_time,
                 max_server_freq_hz,
                 safety_metrics=metrics_by_id.get(str(server.get("id")), {}),
+                task_energy_scale=task_energy_scale,
             )
         if self.debug_high_state and not self._debug_high_state_printed:
             self._debug_high_state_printed = True
@@ -116,13 +131,22 @@ class HierarchicalStateEncoder:
         workload = safe_float(task.get("workload_cycles", 0.0))
         deadline = self.workflow_deadline_scale(task, current_time)
         absolute_deadline = safe_float(task.get("absolute_deadline", current_time + deadline))
-        remaining_deadline = absolute_deadline - current_time
-        workflow_task_count = safe_float(task.get("workflow_task_count", 1.0), 1.0)
+        task_ready_time = safe_float(
+            first_present(task, ("task_ready_time", "ready_time", "arrival_time"), current_time),
+            current_time,
+        )
+        job_remaining_deadline = absolute_deadline - task_ready_time
+        workflow_remaining_deadline = absolute_deadline - current_time
+        ready_queue_waiting_time = max(
+            safe_float(task.get("ready_queue_waiting_time", current_time - task_ready_time), 0.0),
+            0.0,
+        )
         return np.array(
             [
                 np.tanh(workload / 1e10),
-                np.clip(remaining_deadline / deadline, -10.0, 10.0),
-                workflow_task_count / max(self.max_ready_tasks, 1),
+                np.clip(job_remaining_deadline / deadline, -10.0, 10.0),
+                np.clip(workflow_remaining_deadline / deadline, -10.0, 10.0),
+                np.clip(ready_queue_waiting_time / deadline, 0.0, 10.0),
             ],
             dtype=np.float32,
         )
@@ -131,7 +155,15 @@ class HierarchicalStateEncoder:
         values = [safe_float(server.get("max_freq_hz", 0.0)) for server in servers[: self.max_servers]]
         return max(max(values, default=1.0), 1.0)
 
-    def high_server_features(self, server, task, current_time, max_server_freq_hz, safety_metrics=None):
+    def high_server_features(
+        self,
+        server,
+        task,
+        current_time,
+        max_server_freq_hz,
+        safety_metrics=None,
+        task_energy_scale=1.0,
+    ):
         metrics = self.high_server_pair_metrics(
             server,
             task,
@@ -142,25 +174,16 @@ class HierarchicalStateEncoder:
         deadline = max(float(metrics["workflow_relative_deadline"]), EPS)
         return np.array(
             [
-                self.norm_deadline_time(metrics["wait_time"], deadline),
-                self.norm_count(metrics["queue_count"]),
-                self.norm_deadline_time(metrics["queue_load"], deadline),
                 self.norm_deadline_time(metrics["queued_processing_time"], deadline),
                 self.norm_deadline_time(metrics["estimated_execution_time"], deadline),
                 self.norm_deadline_time(metrics["estimated_ast"] - current_time, deadline),
                 self.norm_deadline_time(metrics["estimated_finish_time"] - metrics["workflow_arrival_time"], deadline),
-                np.clip(metrics["slack_after_assign"] / deadline, -10.0, 10.0),
                 np.clip(metrics["safe_execution_budget"] / deadline, -10.0, 10.0),
                 self.norm_deadline_time(metrics["communication_time"], deadline),
                 np.clip(metrics["rho_safe"], 0.0, 1.0),
-                1.0 if bool(metrics["low_action_feasible"]) else 0.0,
-                np.tanh(metrics["bandwidth_mbps"] / 10000.0),
-                metrics["max_freq_hz"] / max(max_server_freq_hz, EPS),
-                np.tanh(metrics["total_power"] / 250.0),
-                np.tanh(metrics["failure_rate"] / 1e-3),
-                self.norm_deadline_time(metrics["wait_time_ema"], deadline),
+                np.tanh(metrics["primary_energy_ref_rho1"] / max(task_energy_scale, EPS)),
+                np.clip(metrics["task_failure_probability_rho1"], 0.0, 1.0),
                 self.norm_deadline_time(metrics["queued_processing_time_ema"], deadline),
-                self.norm_count(metrics["queue_count_ema"]),
                 self.norm_count(metrics["recent_primary_assignments"]),
                 self.norm_count(metrics["recent_backup_assignments"]),
             ],
@@ -259,6 +282,15 @@ class HierarchicalStateEncoder:
         queue_count_ema = max(safe_float(safety_metrics.get("queue_count_ema", queue_count), queue_count), 0.0)
         recent_primary_assignments = max(safe_float(safety_metrics.get("recent_primary_assignments", 0.0), 0.0), 0.0)
         recent_backup_assignments = max(safe_float(safety_metrics.get("recent_backup_assignments", 0.0), 0.0), 0.0)
+        primary_energy_ref_rho1 = max(
+            safe_float(safety_metrics.get("primary_energy_ref_rho1", estimated_execution_time * total_power), 0.0),
+            0.0,
+        )
+        task_reliability_rho1 = np.clip(
+            safe_float(safety_metrics.get("task_reliability_rho_1", 1.0), 1.0),
+            0.0,
+            1.0,
+        )
 
         return {
             "wait_time": wait_time,
@@ -281,6 +313,9 @@ class HierarchicalStateEncoder:
             "max_freq_hz": max_freq_hz,
             "total_power": total_power,
             "failure_rate": failure_rate,
+            "primary_energy_ref_rho1": primary_energy_ref_rho1,
+            "task_reliability_rho1": task_reliability_rho1,
+            "task_failure_probability_rho1": 1.0 - task_reliability_rho1,
             "wait_time_ema": wait_time_ema,
             "queued_processing_time_ema": queued_processing_time_ema,
             "queue_count_ema": queue_count_ema,

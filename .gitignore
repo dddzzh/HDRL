@@ -29,6 +29,10 @@ tmp/
 *.tar.gz
 *.7z
 
+# Local research papers and generated figures
+paper/*.pdf
+plot/*.png
+
 # OS files
 .DS_Store
 Thumbs.db

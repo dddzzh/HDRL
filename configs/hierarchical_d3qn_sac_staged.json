@@ -1,0 +1,55 @@
+{
+  "base_config": "configs/hierarchical_d3qn_sac.json",
+  "base_overrides": {
+    "agent": {
+      "shared_deadline_lagrangian": {
+        "enabled": false
+      }
+    }
+  },
+  "checkpoint_dir": "results/hierarchical_d3qn_sac_staged",
+  "handoff_checkpoint": "best",
+  "checkpoint_deadline_target": 0.99,
+  "phases": [
+    {
+      "name": "01_heft_pretrain_sac",
+      "episodes": 300,
+      "high_algorithm": "heft",
+      "freeze_high": false,
+      "freeze_low": false,
+      "low_learning_rate": 0.0003,
+      "low_updates_per_episode": 10
+    },
+    {
+      "name": "02_train_d3qn_freeze_sac",
+      "episodes": 600,
+      "high_algorithm": "d3qn",
+      "freeze_high": false,
+      "freeze_low": true,
+      "high_learning_rate": 0.0003,
+      "high_updates_per_episode": 10,
+      "epsilon_start": 1.0
+    },
+    {
+      "name": "03_finetune_sac_freeze_d3qn",
+      "episodes": 300,
+      "high_algorithm": "d3qn",
+      "freeze_high": true,
+      "freeze_low": false,
+      "low_learning_rate": 0.0001,
+      "low_updates_per_episode": 10
+    },
+    {
+      "name": "04_joint_finetune",
+      "episodes": 300,
+      "high_algorithm": "d3qn",
+      "freeze_high": false,
+      "freeze_low": false,
+      "high_learning_rate": 0.0001,
+      "low_learning_rate": 0.00006,
+      "high_updates_per_episode": 5,
+      "low_updates_per_episode": 2,
+      "epsilon_start": 0.1
+    }
+  ]
+}

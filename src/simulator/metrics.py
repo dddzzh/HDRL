@@ -78,6 +78,13 @@ def compute_summary(workflow_results, event_log, servers):
 
     return {
         "total_energy": total_energy,
+        # D3QN_for_Fog_Computing(1.6) comparison definition:
+        # sum of each completed workflow's end-to-end duration measured from
+        # its arrival time. This includes queueing/waiting and execution.
+        "episode_makespan": sum(
+            float(workflow.get("makespan", 0.0) or 0.0)
+            for workflow in finished_workflows
+        ),
         "avg_workflow_makespan": _avg(finished_workflows, "makespan"),
         "max_workflow_makespan": _max(finished_workflows, "makespan"),
         "avg_workflow_compute_span": _avg(finished_workflows, "compute_span"),

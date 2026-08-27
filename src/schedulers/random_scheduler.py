@@ -16,7 +16,9 @@ class RandomScheduler(BaseScheduler):
         if not hasattr(self, "rng"):
             self.reset()
 
-        task = self.rng.choice(state["ready_tasks"])
+        # Keep the common task ordering fixed; randomness is only the server
+        # placement decision in this comparison baseline.
+        task = state["ready_tasks"][0]
         server = self.rng.choice(state["servers"])
         rho_levels = state.get("rho_levels") or [self.params.get("rho", 1.0)]
         rho = float(self.rng.choice(rho_levels))

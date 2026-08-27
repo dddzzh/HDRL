@@ -1,0 +1,30 @@
+{
+  "generator": {"num_workflows": 20, "dataset_scale": "small", "arrival_process": "cai_2025_exponential", "arrival_rate": 0.1},
+  "resources": {"path": "configs/resources_edge_cloud_default.json", "num_edge": 20, "num_cloud": 6},
+  "simulation": {"ready_task_order": "smallest_workload", "deadline_type": "medium", "workflow_reliability_requirement": 0.9, "default_rho": 1.0, "rho_min": 0.2, "enable_backup_duplication": false},
+  "agent": {
+    "algorithm": "adapted_dream_dqn",
+    "shared": {"state": {"max_ready_tasks": 32}},
+    "dream": {
+      "hidden_dim": 128,
+      "gamma": 0.3,
+      "learning_rate": 0.0003,
+      "replay_capacity": 50000,
+      "batch_size": 256,
+      "epsilon_start": 1.0,
+      "epsilon_min": 0.05,
+      "epsilon_decay": 0.99999,
+      "target_update_frequency": 500,
+      "training_episodes": 1500,
+      "max_grad_norm": 1.0,
+      "huber_delta": 1.0,
+      "max_abs_q": 1000.0,
+      "max_abs_parameter": 1000.0,
+      "enable_fault_tolerance": false,
+      "seed": 42,
+      "device": "cuda"
+    }
+  },
+  "objective": {"reward_mode": "deadline_incremental_only", "deadline_violation_weight": 5.0, "fixed_deadline_lambda": 10.0, "fixed_reliability_lambda": 1.0, "high_energy_weight": 1.0},
+  "training": {"seed": 42, "total_episodes": 1500, "torch_cpu_threads": 1, "eval_interval": 20, "eval_episodes": 10, "eval_seed": 242000, "save_every": 50, "checkpoint_dir": "results/dream_dqn"}
+}

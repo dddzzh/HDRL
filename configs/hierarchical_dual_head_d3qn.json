@@ -1,0 +1,93 @@
+{
+  "generator": {
+    "num_workflows": 20,
+    "dataset_scale": "small",
+    "arrival_process": "cai_2025_exponential",
+    "arrival_rate": 0.1
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_default.json",
+    "num_edge": 20,
+    "num_cloud": 6
+  },
+  "simulation": {
+    "ready_task_order": "smallest_workload",
+    "deadline_type": "medium",
+    "workflow_reliability_requirement": 0.9,
+    "default_rho": 1.0,
+    "rho_min": 0.2,
+    "energy_eta": 0.5,
+    "default_reliability": 0.9,
+    "reliability_exponent": 1.0,
+    "enable_backup_duplication": false,
+    "remaining_task_reliability_estimate": 0.999,
+    "server_history_ema_alpha": 0.9
+  },
+  "agent": {
+    "high_algorithm": "d3qn",
+    "shared": {
+      "device": "auto",
+      "state": {
+        "max_ready_tasks": 32
+      }
+    },
+    "shared_deadline_lagrangian": {
+      "enabled": false
+    },
+    "high": {
+      "action_mode": "primary_only",
+      "backup_selection": "disabled",
+      "hidden_dim": 256,
+      "hidden_layers": 2,
+      "learning_rate": 0.0003,
+      "deadline_learning_rate": 0.0003,
+      "reward_gamma": 0.99,
+      "deadline_gamma": 0.99,
+      "tau": 0.005,
+      "epsilon": 1.0,
+      "epsilon_min": 0.1,
+      "epsilon_decay": 0.00018,
+      "replay_size": 50000,
+      "batch_size": 256,
+      "training_per_episode": 10,
+      "max_grad_norm": 1.0,
+      "deadline_positive_fraction": 0.3,
+      "reward": {
+        "mode": "scalar",
+        "lagrangian_energy_normalization": "none"
+      },
+      "lagrangian": {
+        "enabled": true,
+        "constraint_metric": "workflow_miss_rate",
+        "deadline_budget": 0.01,
+        "deadline_lambda_init": 1.0,
+        "dual_learning_rate": 0.001,
+        "lambda_max": 100.0,
+        "warmup_episodes": 50,
+        "window_workflows": 100,
+        "update_interval": "episode_end"
+      }
+    }
+  },
+  "objective": {
+    "reward_mode": "lagrangian_deadline",
+    "reward_profile": "ep740_lagrangian_v1",
+    "deadline_violation_weight": 3.0,
+    "high_energy_weight": 1.0,
+    "team_energy_weight": 0.0
+  },
+  "training": {
+    "seed": 42,
+    "torch_cpu_threads": 1,
+    "training_mode": "joint",
+    "total_episodes": 1500,
+    "update_mode": "episode_end",
+    "eval_interval": 20,
+    "eval_episodes": 5,
+    "eval_seed": 242000,
+    "checkpoint_deadline_target": 0.99,
+    "save_every": 20,
+    "save_replay_buffer": false,
+    "checkpoint_dir": "results/hierarchical_dual_head_d3qn"
+  }
+}

@@ -5,7 +5,11 @@ import random
 import numpy as np
 
 from src.simulator.event_queue import EventQueue, EventType
-from src.schedulers.heft import HEFTScheduler, reference_heft_makespan
+from src.schedulers.heft import (
+    HEFTScheduler,
+    calculate_upward_ranks,
+    reference_heft_makespan,
+)
 from src.simulator.deadline import cai_2025_deadline_fields, validate_deadline_type
 from src.simulator.metrics import compute_summary
 from src.simulator.network import get_link_bandwidth
@@ -16,6 +20,7 @@ from src.simulator.resource import (
     compute_transfer_time,
 )
 from src.simulator.reliability import task_reliability_from_server, workflow_reliability
+from src.simulator.sub_deadline import distribute_existing_workflow_deadline
 from src.simulator.workflow import Task, Workflow, create_workflow_state, is_task_ready
 
 
@@ -35,6 +40,7 @@ class EdgeCloudWorkflowEnv:
 
     def reset(self):
         self.rng = random.Random(self.seed)
+        self.ready_task_order = self._ready_task_order()
         self.reference_makespan_cache = {}
         self.resources = clone_runtime_resources(self.initial_resources)
         self.servers = self.resources["servers"]
@@ -49,6 +55,20 @@ class EdgeCloudWorkflowEnv:
         ]
         for state in self.workflow_states:
             self._initialize_deadline_fields(state)
+            self._initialize_sub_deadline_fields(state)
+        self.workflow_upward_ranks = {}
+        if self.ready_task_order == "upward_rank" or bool(
+            self.sim_config.get("compute_upward_rank_feature", False)
+        ):
+            self.workflow_upward_ranks = {
+                state["workflow_id"]: calculate_upward_ranks(
+                    state["workflow"],
+                    self.servers,
+                    self.link_bandwidth_mbps,
+                    rho=float(self.sim_config.get("upward_rank_rho", 1.0)),
+                )
+                for state in self.workflow_states
+            }
         self.workflow_by_id = {
             state["workflow_id"]: state for state in self.workflow_states
         }
@@ -87,6 +107,7 @@ class EdgeCloudWorkflowEnv:
         ready_tasks = self._get_ready_tasks()
         state = {
             "time": self.current_time,
+            "ready_task_order": self.ready_task_order,
             "ready_tasks": ready_tasks,
             "workflows": {
                 state["workflow_id"]: state["workflow"]
@@ -228,11 +249,26 @@ class EdgeCloudWorkflowEnv:
             task=task,
             workflow_state=workflow_state,
         )
+        finish_times = [
+            float(value)
+            for value in workflow_state.get("task_finish_times", {}).values()
+            if value is not None
+        ]
+        workflow_arrival_time = float(workflow_state["arrival_time"])
+        workflow_partial_makespan_before = (
+            max(0.0, max(finish_times) - workflow_arrival_time)
+            if finish_times
+            else 0.0
+        )
         return {
             "total_energy": float(final_plan["total_energy"]),
             "primary_aft": float(final_plan["primary_plan"]["aft"]),
             "final_aft": float(final_plan["final_aft"]),
             "final_reliability": float(final_plan["final_reliability"]),
+            "workflow_arrival_time": workflow_arrival_time,
+            "workflow_partial_makespan_before": float(
+                workflow_partial_makespan_before
+            ),
         }
 
     def estimate_action_energy_ref(self, action):
@@ -276,6 +312,13 @@ class EdgeCloudWorkflowEnv:
         )
         workflow_absolute_deadline = self.workflow_absolute_deadline(workflow_state)
         workflow_relative_deadline = self.workflow_relative_deadline(workflow_state)
+        task_sub_deadline_relative = None
+        task_sub_deadline_absolute = None
+        if bool(workflow_state.get("sub_deadline_enabled", False)):
+            (
+                task_sub_deadline_relative,
+                task_sub_deadline_absolute,
+            ) = self.task_sub_deadline(workflow_state, task_id)
         final_download_time = self._estimate_final_download_time_if_exit(workflow_state, task_id, server)
         task_latest_finish_time = float(workflow_absolute_deadline) - float(final_download_time)
         margin = float(self.sim_config.get("low_deadline_safety_margin_ratio", 0.05))
@@ -301,6 +344,11 @@ class EdgeCloudWorkflowEnv:
             "workflow_arrival_time": float(workflow_state["arrival_time"]),
             "workflow_absolute_deadline": float(workflow_absolute_deadline),
             "workflow_relative_deadline": float(workflow_relative_deadline),
+            "workflow_task_count": float(
+                self._workflow_task_count(workflow_state["workflow"])
+            ),
+            "task_sub_deadline_relative": task_sub_deadline_relative,
+            "task_sub_deadline_absolute": task_sub_deadline_absolute,
             "estimated_ast": float(plan_rho1["ast"]),
             "execution_time_rho_1": execution_time_rho_1,
             "task_reliability_rho_1": float(plan_rho1["reliability"]),
@@ -328,8 +376,8 @@ class EdgeCloudWorkflowEnv:
             server_id = int(server["id"])
             metrics = self.compute_low_safety_metrics(workflow_id, task_id, server_id)
             low_action_feasible = bool(metrics["low_action_feasible"])
-            # Structural action mask only: every real server is selectable.
-            # Deadline/reliability feasibility is diagnostic and reward-only.
+            # Structural mask only: every real server is selectable. Deadline
+            # feasibility remains diagnostic/reward information for SAC/D3QN.
             primary_server_mask[index] = True
             primary_energy_ref_rho1 = float(
                 self.estimate_primary_energy_ref_rho1(
@@ -361,7 +409,14 @@ class EdgeCloudWorkflowEnv:
                 "task_latest_finish_time": float(metrics["task_latest_finish_time"]),
                 "current_time": float(metrics["current_time"]),
                 "workflow_relative_deadline": float(metrics["workflow_relative_deadline"]),
+                "workflow_task_count": float(metrics["workflow_task_count"]),
                 "workflow_absolute_deadline": float(metrics["workflow_absolute_deadline"]),
+                "task_sub_deadline_relative": metrics.get(
+                    "task_sub_deadline_relative"
+                ),
+                "task_sub_deadline_absolute": metrics.get(
+                    "task_sub_deadline_absolute"
+                ),
                 "primary_energy_ref_rho1": primary_energy_ref_rho1,
                 **self._server_history_metrics(server_id),
             }
@@ -370,7 +425,9 @@ class EdgeCloudWorkflowEnv:
             raise RuntimeError(
                 f"No positive primary energy reference for workflow={workflow_id}, task={task_id}."
             )
-        task_energy_scale = float(np.median(np.asarray(server_energy_refs, dtype=np.float64)))
+        task_energy_scale = float(
+            np.median(np.asarray(server_energy_refs, dtype=np.float64))
+        )
 
         backup_pair_mask = np.zeros((server_count, server_count), dtype=bool)
         if self.enable_backup_duplication:
@@ -859,6 +916,13 @@ class EdgeCloudWorkflowEnv:
                     task_ready_time = self.compute_task_ready_time(task_payload, state)
                     absolute_deadline = self.workflow_absolute_deadline(state)
                     meta = self._workflow_task_metadata(state, workflow)
+                    sub_deadline_relative = None
+                    sub_deadline_absolute = None
+                    if bool(state.get("sub_deadline_enabled", False)):
+                        (
+                            sub_deadline_relative,
+                            sub_deadline_absolute,
+                        ) = self.task_sub_deadline(state, task_id)
                     ready_tasks.append(
                         {
                             "workflow_id": state["workflow_id"],
@@ -867,6 +931,8 @@ class EdgeCloudWorkflowEnv:
                             "workload_cycles": workload_cycles,
                             "absolute_deadline": absolute_deadline,
                             "relative_deadline": self.workflow_relative_deadline(state),
+                            "sub_deadline_relative": sub_deadline_relative,
+                            "sub_deadline_absolute": sub_deadline_absolute,
                             "task_ready_time": task_ready_time,
                             "ready_queue_waiting_time": max(0.0, self.current_time - task_ready_time),
                             "workflow_task_count": self._workflow_task_count(workflow),
@@ -874,20 +940,53 @@ class EdgeCloudWorkflowEnv:
                             "reliability": meta["reliability"],
                             "workflow_energy_used": meta["workflow_energy_used"],
                             "workflow_reliability": meta["workflow_reliability"],
+                            "upward_rank": float(
+                                self.workflow_upward_ranks.get(
+                                    state["workflow_id"], {}
+                                ).get(task_id, 0.0)
+                            ),
                         }
                     )
-        # Ready-task dispatch order is an environment rule. The current
-        # hierarchical PPO version schedules the smallest-workload ready task,
-        # while the high-level policy only chooses its execution server.
-        ready_tasks.sort(
-            key=lambda item: (
-                float(item.get("workload_cycles", 0.0)),
-                item["arrival_time"],
-                item["workflow_id"],
-                item["task_id"],
+        # Task dispatch is an environment rule shared by every placement
+        # algorithm.  The policy only chooses a server (and, where applicable,
+        # a frequency) for ready_tasks[0].
+        if self.ready_task_order == "upward_rank":
+            ready_tasks.sort(
+                key=lambda item: (
+                    -float(item["upward_rank"]),
+                    item["arrival_time"],
+                    item["workflow_id"],
+                    item["task_id"],
+                )
             )
-        )
+        else:
+            ready_tasks.sort(
+                key=lambda item: (
+                    float(item.get("workload_cycles", 0.0)),
+                    item["arrival_time"],
+                    item["workflow_id"],
+                    item["task_id"],
+                )
+            )
         return ready_tasks
+
+    def _ready_task_order(self):
+        aliases = {
+            "upward_rank": "upward_rank",
+            "uprank": "upward_rank",
+            "rank_u": "upward_rank",
+            "smallest_workload": "smallest_workload",
+            "sjf": "smallest_workload",
+        }
+        configured = str(
+            self.sim_config.get("ready_task_order", "smallest_workload")
+        ).strip().lower()
+        if configured not in aliases:
+            raise ValueError(
+                f"invalid ready_task_order={configured!r}; expected one of "
+                f"{sorted(aliases)}"
+            )
+        return aliases[configured]
 
     def _update_done(self):
         if self._pending_finish_events > 0:
@@ -966,6 +1065,53 @@ class EdgeCloudWorkflowEnv:
         self._set_deadline_fields(workflow, deadline_info)
         self._set_workflow_state_deadline_fields(workflow_state, deadline_info)
         self._trace_deadline_generation(workflow_state, deadline_info)
+
+    def _initialize_sub_deadline_fields(self, workflow_state):
+        config = dict(self.sim_config.get("sub_deadline", {}))
+        if not bool(config.get("enabled", False)):
+            workflow_state["sub_deadline_enabled"] = False
+            workflow_state["task_sub_deadlines_relative"] = {}
+            workflow_state["task_sub_deadlines_absolute"] = {}
+            return
+        method = str(config.get("method", "heft_aft_scaled_v1")).strip().lower()
+        if method != "heft_aft_scaled_v1":
+            raise ValueError(
+                "simulation.sub_deadline.method must be 'heft_aft_scaled_v1'"
+            )
+        stats, details = distribute_existing_workflow_deadline(
+            workflow_state["workflow"],
+            self.servers,
+            link_bandwidth_mbps=self.link_bandwidth_mbps,
+            rho=float(self.sim_config.get("deadline_heft_rho", 1.0)),
+            return_details=True,
+            cache=self.reference_makespan_cache,
+        )
+        if details is None:
+            raise RuntimeError("sub-Deadline details were unexpectedly omitted")
+        workflow_state["sub_deadline_enabled"] = True
+        workflow_state["sub_deadline_method"] = stats.method
+        workflow_state["sub_deadline_stats"] = stats
+        workflow_state["task_sub_deadlines_relative"] = dict(
+            details.relative_by_task
+        )
+        workflow_state["task_sub_deadlines_absolute"] = dict(
+            details.absolute_by_task
+        )
+
+    def task_sub_deadline(self, workflow_state, task_id):
+        task_id = int(task_id)
+        relative = workflow_state.get("task_sub_deadlines_relative", {}).get(
+            task_id
+        )
+        absolute = workflow_state.get("task_sub_deadlines_absolute", {}).get(
+            task_id
+        )
+        if relative is None or absolute is None:
+            raise KeyError(
+                "sub-Deadline is unavailable for "
+                f"workflow={workflow_state['workflow_id']}, task={task_id}"
+            )
+        return float(relative), float(absolute)
 
     def _deadline_type(self):
         return validate_deadline_type(self.sim_config.get("deadline_type", "medium"))
