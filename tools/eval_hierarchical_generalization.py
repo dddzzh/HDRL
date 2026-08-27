@@ -49,7 +49,7 @@ def parse_args():
             "with HEFT using the exact same trained SAC as a paired baseline."
         )
     )
-    parser.add_argument("--config", default="configs/hierarchical_d3qn_sac.json")
+    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--seed-start", type=int, default=342000)
     parser.add_argument("--num-seeds", type=int, default=20)

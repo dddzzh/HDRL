@@ -30,8 +30,12 @@ tmp/
 *.7z
 
 # Local research papers and generated figures
-paper/*.pdf
+paper/
 plot/*.png
+
+# Historical reference implementations kept locally only
+D3QN_for_Fog_Computing(1.6）/
+third_party/
 
 # OS files
 .DS_Store

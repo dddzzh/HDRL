@@ -112,7 +112,7 @@ def parse_args():
             "Fastest+SAC and Random+SAC on paired Pegasus workflow seeds."
         )
     )
-    parser.add_argument("--config", default="configs/hierarchical_d3qn_sac.json")
+    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
     parser.add_argument("--d3qn-checkpoint", default=DEFAULT_D3QN_CHECKPOINT)
     parser.add_argument("--oo-config", default=DEFAULT_OO_CONFIG)
     parser.add_argument("--oo-checkpoint", default=DEFAULT_OO_CHECKPOINT)

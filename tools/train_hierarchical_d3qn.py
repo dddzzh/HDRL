@@ -52,7 +52,7 @@ from src.device_utils import configure_torch_runtime, describe_device
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train D3QN/HEFT high-level + low-level DVFS learner.")
-    parser.add_argument("--config", default="configs/hierarchical_d3qn_sac.json")
+    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
     parser.add_argument("--episodes", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--smoke-test", action="store_true")

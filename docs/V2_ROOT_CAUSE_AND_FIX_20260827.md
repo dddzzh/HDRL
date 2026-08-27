@@ -404,7 +404,7 @@ Deadline 定义或可靠性要求。
 
 ### S1：让对偶回路真正工作（纯配置 + E10 修复）
 
-`configs/v2_s1_active_dual.json`：`dual_learning_rate` 0.001 → 0.2，
+S1 诊断配置（已归档在完整备份分支）：`dual_learning_rate` 0.001 → 0.2，
 `deadline_budget` 0.0 → 0.01（正好对应 99%），`lambda_max` 100 → 20。
 其余与原配置逐字相同，含同一个 `initial_full_checkpoint`。
 

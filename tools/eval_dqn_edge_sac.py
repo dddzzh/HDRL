@@ -44,7 +44,7 @@ def parse_args():
         description="Evaluate one trained DQN-Edge upper policy with rho=1 and SAC."
     )
     parser.add_argument("--dqn-config", default="configs/dqn_edge.json")
-    parser.add_argument("--low-config", default="configs/hierarchical_d3qn_sac_server_ctde.json")
+    parser.add_argument("--low-config", default="configs/v2_small_20edge_6cloud.json")
     parser.add_argument("--dqn-checkpoint", default=DEFAULT_DQN_CHECKPOINT)
     parser.add_argument("--low-checkpoint", default=DEFAULT_LOW_CHECKPOINT)
     parser.add_argument("--seed-start", type=int, default=242000)

@@ -83,7 +83,7 @@ class PegasusXmlGeneratorTest(unittest.TestCase):
         )
 
     def test_hierarchical_config_is_compact_and_builds_deadlines(self):
-        config_path = PROJECT_ROOT / "configs" / "hierarchical_d3qn_sac.json"
+        config_path = PROJECT_ROOT / "configs" / "v2_small_20edge_6cloud.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         self.assertEqual(
             set(config["generator"]),

@@ -2,7 +2,7 @@
 
 用法::
 
-    python tools/inspect_workflows.py --config configs/recr_ppo_demo.json --num-workflows 100
+    python tools/inspect_workflows.py --config configs/v2_small_20edge_6cloud.json --num-workflows 100
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from src.simulator.workflow import Workflow
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inspect sampled workflows: stats + checks.")
-    parser.add_argument("--config", default="configs/recr_ppo_demo.json")
+    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
     parser.add_argument("--dataset", default=None, choices=["pegasus", "alibaba_pool", "alibaba_json"])
     parser.add_argument("--num-workflows", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
