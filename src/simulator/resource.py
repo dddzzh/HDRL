@@ -302,7 +302,10 @@ def _normalize_server(server):
     if "failure_rate_exponent" in server:
         server["failure_rate_exponent"] = float(server["failure_rate_exponent"])
     server["min_rho"] = float(server.get("min_rho", 0.1))
+    # f_min normalizes the fault-rate model, so it stays at the hardware limit and
+    # is deliberately NOT raised to the energy-efficient frequency.
     server["min_freq_hz"] = float(server.get("min_freq_hz", server["min_rho"] * server["max_freq_hz"]))
+    server["rho_energy_efficient"] = compute_rho_energy_efficient(server)
     server["execution_available_time"] = 0.0
     server["backup_available_time"] = 0.0
     # Backward-compatible alias for schedulers that still read a single queue.
@@ -352,6 +355,50 @@ def compute_energy(workload_cycles, server, rho):
     return power * exec_time
 
 
+def compute_rho_energy_efficient(server):
+    """Minimum energy-efficient frequency, normalized to f_max.
+
+    Task energy is ``E(rho) = (L / f_max) * (P_ind / rho + C_ef * rho^2)``, whose
+    interior minimum is ``rho_ee = (P_ind / (2 C_ef))^(1/3)`` for the cubic model
+    ``m = 3``.  Running below ``rho_ee`` *increases* energy, so the region is
+    provably dominated and the scheduler should clamp at
+    ``f_low = max(f_min, f_ee)``.
+
+    ``static_power`` / ``dynamic_power`` are read as ``P_ind`` (frequency
+    independent active power) and ``C_ef * f_max^3``.  Always-on leakage that
+    DVFS cannot touch is outside the scheduling objective and must not appear in
+    ``static_power``; see configs/resources_edge_cloud_dvfs_v3.json.
+    """
+    p_ind = float(server["static_power"])
+    c_ef = float(server["dynamic_power"])
+    hardware_min = float(server.get("min_rho", 0.1))
+    if c_ef <= 0.0:
+        return 1.0
+    rho_ee = (p_ind / (2.0 * c_ef)) ** (1.0 / 3.0)
+    return min(1.0, max(hardware_min, rho_ee))
+
+
+def map_discrete_rho_to_server_range(server, rho_levels, level_index):
+    """Map an algorithm's discrete DVFS level onto ``[rho_ee(server), 1]``.
+
+    The number, ordering, and relative spacing of the original discrete actions
+    stay unchanged; only their physical frequencies are adapted to the selected
+    heterogeneous server.
+    """
+    levels = tuple(float(value) for value in rho_levels)
+    index = int(level_index)
+    if len(levels) < 2 or not 0 <= index < len(levels):
+        raise ValueError("DVFS mapping requires at least two levels and a valid index.")
+    nominal_span = levels[-1] - levels[0]
+    if nominal_span <= 0.0:
+        raise ValueError("DVFS levels must be strictly increasing.")
+    position = (levels[index] - levels[0]) / nominal_span
+    rho_floor = float(
+        server.get("rho_energy_efficient", compute_rho_energy_efficient(server))
+    )
+    return min(1.0, max(rho_floor, rho_floor + position * (1.0 - rho_floor)))
+
+
 def print_resource_diagnostics(resources):
     servers = list(resources.get("servers", []))
     if not servers:
@@ -386,9 +433,13 @@ def print_resource_diagnostics(resources):
             float(row.get("static_power", 0.0)) + float(row.get("dynamic_power", 0.0))
             for row in rows
         ) / max(len(rows), 1)
+        avg_rho_ee = sum(
+            float(row.get("rho_energy_efficient", 1.0)) for row in rows
+        ) / max(len(rows), 1)
         print(
             f"[resources] profile_avg server_type={server_type} "
-            f"count={len(rows)} avg_max_freq_ghz={avg_freq:.4f} avg_power={avg_power:.4f}W"
+            f"count={len(rows)} avg_max_freq_ghz={avg_freq:.4f} avg_power={avg_power:.4f}W "
+            f"avg_rho_energy_efficient={avg_rho_ee:.4f}"
         )
     _warn_dominant_servers(servers)
 

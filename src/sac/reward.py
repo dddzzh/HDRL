@@ -129,6 +129,12 @@ def build_low_sac_reward_components(
 
     return {
         **dvfs_components,
+        # Episode-end constrained SAC variants need these two identifiers to
+        # assign a completed workflow's cost back to its own transitions.
+        # The production replay ignores unknown keys, so legacy behaviour is
+        # unchanged.
+        "workflow_id": workflow_id,
+        "task_id": task_id,
         "energy_saved": raw_energy_saving_joules,
         "energy_saving_joules": raw_energy_saving_joules,
         "task_reliability_reference": float(reliability_ref),

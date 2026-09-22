@@ -36,18 +36,24 @@ from src.baselines.dqn_edge import (
 )
 from src.simulator.metrics import compute_summary
 from tools.hierarchical_common import (
+    attach_satisfaction_metrics,
     build_env,
     build_resources,
     build_workflows,
+    checkpoint_validation_seeds,
+    combine_checkpoint_metrics,
     configure_agent_state,
+    format_satisfaction_summary,
     load_json,
     metric_rank,
+    satisfaction_field_names,
+    write_checkpoint_selection,
 )
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the adapted DQN-Edge reproduction.")
-    parser.add_argument("--config", default="configs/dqn_edge.json")
+    parser.add_argument("--config", default="configs/dqn_edge_small_20edge_6cloud.json")
     parser.add_argument("--episodes", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--device")
@@ -210,6 +216,9 @@ def run_episode(env, scheduler, training=True):
             "mean_time_loss": float(np.mean([x["time_loss"] for x in updates])) if updates else None,
             "mean_energy_loss": float(np.mean([x["energy_loss"] for x in updates])) if updates else None,
             "mean_attention_loss": float(np.mean([x["attention_loss"] for x in updates])) if updates else None,
+            "mean_time_q_action_std": float(np.mean([x["time_q_action_std"] for x in updates])) if updates else None,
+            "mean_energy_q_action_std": float(np.mean([x["energy_q_action_std"] for x in updates])) if updates else None,
+            "mean_weighted_q_scale_ratio": float(np.mean([x["weighted_q_scale_ratio"] for x in updates])) if updates else None,
             "mean_time_weight": float(np.mean([x[0] for x in weights])) if weights else None,
             "mean_energy_weight": float(np.mean([x[1] for x in weights])) if weights else None,
             "reward_source": reward_info["source"] if steps else None, **result}
@@ -241,7 +250,7 @@ def evaluate_scheduler(config, resources, scheduler, *, seed, episodes, smoke_te
         metrics[key] = float(np.mean(values)) if values else None
     metrics["eval_episodes"] = int(episodes)
     metrics["eval_seed"] = int(seed)
-    return metrics
+    return attach_satisfaction_metrics(metrics, rows)
 
 
 def run_training(config, args):
@@ -264,6 +273,7 @@ def run_training(config, args):
     print(
         "[device] "
         f"dqn_edge={describe_device(agent.device)} simulation=cpu "
+        "rho=fixed_1 "
         f"torch_threads={runtime_threads['torch_cpu_threads']} "
         f"interop_threads={runtime_threads['torch_interop_threads']} "
         f"variant={runtime['variant']} "
@@ -271,6 +281,38 @@ def run_training(config, args):
     )
     episodes = args.episodes if args.episodes is not None else int(config["training"].get("total_episodes", agent_config.training_episodes))
     if args.smoke_test: episodes = min(episodes, 2)
+    checkpoint_deadline_target = config["training"].get(
+        "checkpoint_deadline_target"
+    )
+    if checkpoint_deadline_target is not None:
+        checkpoint_deadline_target = float(checkpoint_deadline_target)
+    checkpoint_reliability_target = float(
+        config["training"].get("checkpoint_reliability_target", 1.0)
+    )
+    checkpoint_deadline_esp_threshold = config["training"].get(
+        "checkpoint_deadline_esp_threshold"
+    )
+    checkpoint_deadline_esp_target = config["training"].get(
+        "checkpoint_deadline_esp_target"
+    )
+    if checkpoint_deadline_esp_threshold is not None:
+        checkpoint_deadline_esp_threshold = float(
+            checkpoint_deadline_esp_threshold
+        )
+    if checkpoint_deadline_esp_target is not None:
+        checkpoint_deadline_esp_target = float(checkpoint_deadline_esp_target)
+    eval_seeds = checkpoint_validation_seeds(
+        config["training"], seed + 100000
+    )
+    checkpoint_policy = {
+        "mode": "all_blocks_esp_feasible_then_min_mean_energy",
+        "reliability_target": checkpoint_reliability_target,
+        "deadline_esp_threshold": checkpoint_deadline_esp_threshold,
+        "deadline_esp_target": checkpoint_deadline_esp_target,
+        "eval_seeds": eval_seeds,
+    }
+    if checkpoint_deadline_target is not None:
+        checkpoint_policy["deadline_target"] = checkpoint_deadline_target
     start_episode, best = 0, -float("inf")
     best_metric_rank = None
     best_metrics = None
@@ -285,9 +327,11 @@ def run_training(config, args):
         agent.load_checkpoint(payload); start_episode = int(payload["episode"]) + 1
         best = float(payload["best_episode_reward"])
         saved_rank = payload.get("best_metric_rank")
-        if saved_rank is not None:
+        if saved_rank is not None and payload.get("checkpoint_policy") == checkpoint_policy:
             best_metric_rank = tuple(float(value) for value in saved_rank)
-        best_metrics = payload.get("best_metrics")
+            best_metrics = payload.get("best_metrics")
+        elif saved_rank is not None:
+            print("[checkpoint] reset legacy best rank because the selection policy changed")
     output = (Path(args.resume).resolve().parent if args.resume else
               PROJECT_ROOT / config["training"].get("checkpoint_dir", "results/dqn_edge") / datetime.now().strftime("%Y%m%d_%H%M%S"))
     output.mkdir(parents=True, exist_ok=True)
@@ -301,7 +345,8 @@ def run_training(config, args):
     }
     (output / "resolved_config.json").write_text(json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8")
     fields = ["episode", "episode_reward", "epsilon", "steps", "mean_time_loss", "mean_energy_loss",
-              "mean_attention_loss", "mean_time_weight", "mean_energy_weight", "total_energy",
+              "mean_attention_loss", "mean_time_q_action_std", "mean_energy_q_action_std",
+              "mean_weighted_q_scale_ratio", "mean_time_weight", "mean_energy_weight", "total_energy",
               "deadline_success_rate", "reliability_success_rate", "avg_workflow_response_time"]
     history = output / "history.csv"
     eval_history = output / "eval_history.csv"
@@ -314,10 +359,11 @@ def run_training(config, args):
         "deadline_success_rate",
         "reliability_success_rate",
         "avg_workflow_response_time",
+        *satisfaction_field_names(),
     ]
     eval_interval = int(config["training"].get("eval_interval", 20))
     eval_episodes = int(config["training"].get("eval_episodes", 10))
-    eval_seed = int(config["training"].get("eval_seed", seed + 100000))
+    save_every = int(config["training"].get("save_every", 0))
     if args.smoke_test:
         eval_interval = 1
         eval_episodes = 1
@@ -339,6 +385,8 @@ def run_training(config, args):
                 "state_config": runtime["state_config"],
                 "objective_config": runtime["objective_config"],
                 "reward_source": row.get("reward_source"),
+                "experiment_config": resolved,
+                "checkpoint_policy": checkpoint_policy,
             }
         )
         should_evaluate = (
@@ -346,34 +394,73 @@ def run_training(config, args):
             and ((episode + 1) % eval_interval == 0 or episode == episodes - 1)
         )
         if should_evaluate:
-            eval_metrics = evaluate_scheduler(
-                config,
-                resources,
-                scheduler,
-                seed=eval_seed,
-                episodes=eval_episodes,
-                smoke_test=args.smoke_test,
+            validation_blocks = []
+            eval_rows = []
+            for eval_seed in eval_seeds:
+                eval_metrics = evaluate_scheduler(
+                    config,
+                    resources,
+                    scheduler,
+                    seed=eval_seed,
+                    episodes=eval_episodes,
+                    smoke_test=args.smoke_test,
+                )
+                eval_row = {"episode": int(episode), **eval_metrics}
+                eval_rows.append(eval_row)
+                validation_blocks.append(eval_metrics)
+                with eval_history.open("a", newline="", encoding="utf-8") as stream:
+                    writer = csv.DictWriter(stream, eval_fields, extrasaction="ignore")
+                    if stream.tell() == 0:
+                        writer.writeheader()
+                    writer.writerow(eval_row)
+                print(
+                    f"[eval] ep={int(episode)} seed={int(eval_seed)} "
+                    f"{format_satisfaction_summary(eval_row, include_mean=False)} "
+                    f"E={float(eval_metrics['total_energy']) / 1000:.2f}kJ",
+                    flush=True,
+                )
+            checkpoint_metrics = combine_checkpoint_metrics(validation_blocks)
+            current_rank = metric_rank(
+                checkpoint_metrics,
+                deadline_target=checkpoint_deadline_target,
+                reliability_target=checkpoint_reliability_target,
+                deadline_esp_threshold=checkpoint_deadline_esp_threshold,
+                deadline_esp_target=checkpoint_deadline_esp_target,
             )
-            eval_row = {"episode": int(episode), **eval_metrics}
-            with eval_history.open("a", newline="", encoding="utf-8") as stream:
-                writer = csv.DictWriter(stream, eval_fields, extrasaction="ignore")
-                if stream.tell() == 0:
-                    writer.writeheader()
-                writer.writerow(eval_row)
-            current_rank = metric_rank(eval_metrics)
             if best_metric_rank is None or current_rank > best_metric_rank:
                 best_metric_rank = current_rank
-                best_metrics = dict(eval_row)
+                best_metrics = {
+                    "episode": int(episode),
+                    **checkpoint_metrics,
+                    "validation_blocks": eval_rows,
+                }
                 checkpoint["best_metric_rank"] = list(best_metric_rank)
                 checkpoint["best_metrics"] = best_metrics
+                checkpoint["checkpoint_feasible"] = bool(best_metric_rank[0] >= 1.0)
                 torch.save(checkpoint, output / "best_checkpoint.pt")
+            write_checkpoint_selection(
+                output / "checkpoint_selection.json",
+                checkpoint_policy,
+                best_metrics,
+                best_metric_rank,
+                "best_checkpoint.pt",
+            )
         checkpoint["best_episode_reward"] = float(best)
         checkpoint["best_metric_rank"] = (
             None if best_metric_rank is None else list(best_metric_rank)
         )
         checkpoint["best_metrics"] = best_metrics
+        checkpoint["checkpoint_feasible"] = bool(
+            best_metric_rank is not None and best_metric_rank[0] >= 1.0
+        )
         torch.save(checkpoint, output / "latest_checkpoint.pt")
-        print(json.dumps({key: row.get(key) for key in fields}, ensure_ascii=False))
+        if save_every > 0 and (episode + 1) % save_every == 0:
+            torch.save(checkpoint, output / f"checkpoint_ep{episode + 1:04d}.pt")
+        print(json.dumps({
+            key: row.get(key)
+            for key in fields
+            if key != "deadline_success_rate"
+        }, ensure_ascii=False))
     print(f"output_dir={output}")
 
 

@@ -116,6 +116,26 @@ class DQNEdgeAgent:
         with torch.no_grad():
             selected_time_q = self.time_online(states).gather(1, actions).squeeze(1)
             selected_energy_q = self.energy_online(states).gather(1, actions).squeeze(1)
+            all_time_q = self.time_online(states)
+            all_energy_q = self.energy_online(states)
+            time_q_action_std = all_time_q.std(dim=1, unbiased=False).mean()
+            energy_q_action_std = all_energy_q.std(dim=1, unbiased=False).mean()
+            repeated_context = contexts.unsqueeze(1).expand(-1, self.action_dim, -1)
+            all_attention_input = torch.cat(
+                (
+                    all_time_q.unsqueeze(-1),
+                    all_energy_q.unsqueeze(-1),
+                    repeated_context,
+                ),
+                dim=-1,
+            )
+            all_weights = self.attention(all_attention_input)
+            weighted_time_std = (
+                all_weights[..., 0] * all_time_q
+            ).std(dim=1, unbiased=False).mean()
+            weighted_energy_std = (
+                all_weights[..., 1] * all_energy_q
+            ).std(dim=1, unbiased=False).mean()
         attention_input = torch.cat(
             (selected_time_q.unsqueeze(1), selected_energy_q.unsqueeze(1), contexts), dim=1
         )
@@ -126,7 +146,12 @@ class DQNEdgeAgent:
         self.gradient_steps += 1
         return {"time_loss": float(losses[0].detach().cpu()),
                 "energy_loss": float(losses[1].detach().cpu()),
-                "attention_loss": float(attention_loss.detach().cpu())}
+                "attention_loss": float(attention_loss.detach().cpu()),
+                "time_q_action_std": float(time_q_action_std.cpu()),
+                "energy_q_action_std": float(energy_q_action_std.cpu()),
+                "weighted_q_scale_ratio": float(
+                    (weighted_time_std / weighted_energy_std.clamp_min(1e-8)).cpu()
+                )}
 
     def after_environment_step(self):
         self.environment_steps += 1

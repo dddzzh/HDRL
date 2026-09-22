@@ -10,7 +10,7 @@ from src.a2c.a2c import Observation
 
 
 EPS = 1e-8
-SHARED_STATE_VERSION = "d3qn_high_347_v1"
+SHARED_STATE_VERSION = "d3qn_high_deadline_queue_v2"
 BEST_NON_LAGRANGIAN_STATE_VERSION = "d3qn_high_580_best_non_lagrangian_v1"
 SHARED_REWARD_VERSION = "hierarchical_deadline_dvfs_v1"
 SHARED_UPPER_REWARD_VERSION = "upper_deadline_energy_per_workflow_v2"
@@ -80,7 +80,12 @@ def build_shared_state_encoder(state_config=None):
         "legacy_580",
     }:
         return BestNonLagrangianStateEncoder(config)
-    if version not in {SHARED_STATE_VERSION, "current", "d3qn_high_347"}:
+    if version not in {
+        SHARED_STATE_VERSION,
+        "current",
+        "d3qn_high_347",
+        "d3qn_high_347_v1",
+    }:
         raise ValueError(f"Unsupported shared high-state version: {version!r}.")
     encoder = HierarchicalStateEncoder(config)
     encoder.version = SHARED_STATE_VERSION
@@ -336,12 +341,13 @@ def compose_fixed_lambda_upper_reward(
     energy_scale,
     energy_actual,
     workflow_task_count,
+    energy_weight=1.0,
     fixed_deadline_lambda=10.0,
     fixed_deadline_miss_penalty=0.0,
 ):
     """Return the common baseline reward with a fixed Deadline multiplier.
 
-    r_t = ((E_scale - E_actual) / E_scale) / N_w
+    r_t = w_E * ((E_scale - E_actual) / E_scale) / N_w
           - lambda_H * (Delta C_t / D_w)
           - P_miss * Delta V_t
 
@@ -352,9 +358,14 @@ def compose_fixed_lambda_upper_reward(
     energy_scale = max(float(energy_scale), EPS)
     energy_actual = float(energy_actual)
     workflow_task_count = max(float(workflow_task_count), 1.0)
+    energy_weight = float(energy_weight)
     fixed_deadline_lambda = float(fixed_deadline_lambda)
     fixed_deadline_miss_penalty = float(fixed_deadline_miss_penalty)
-    if fixed_deadline_lambda < 0.0 or fixed_deadline_miss_penalty < 0.0:
+    if (
+        energy_weight < 0.0
+        or fixed_deadline_lambda < 0.0
+        or fixed_deadline_miss_penalty < 0.0
+    ):
         raise ValueError("Fixed Deadline coefficients must be non-negative.")
 
     normalized_makespan_increment = max(
@@ -362,7 +373,9 @@ def compose_fixed_lambda_upper_reward(
     )
     energy_saving = energy_scale - energy_actual
     energy_saving_ratio = energy_saving / energy_scale
-    energy_reward = energy_saving_ratio / workflow_task_count
+    energy_reward = (
+        energy_weight * energy_saving_ratio / workflow_task_count
+    )
     deadline_violation_delta = max(0.0, float(deadline_violation_delta))
     incremental_deadline_cost = (
         fixed_deadline_lambda * normalized_makespan_increment
@@ -380,6 +393,7 @@ def compose_fixed_lambda_upper_reward(
         ),
         "reward": float(energy_reward + deadline_reward),
         "energy_reward": float(energy_reward),
+        "energy_weight": float(energy_weight),
         "deadline_reward": float(deadline_reward),
         "deadline_cost": float(deadline_cost),
         "fixed_deadline_lambda": float(fixed_deadline_lambda),

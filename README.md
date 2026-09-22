@@ -51,9 +51,9 @@ D:\Miniconda\envs\py310\python.exe tools\train_coupled_hierarchical_d3qn_sac.py 
 保留 DQN-Edge、DReaM、OO Actor-Critic 和 HIRL：
 
 ```powershell
-D:\Miniconda\envs\py310\python.exe tools\train_dqn_edge.py --config configs\dqn_edge.json
+D:\Miniconda\envs\py310\python.exe tools\train_dqn_edge.py --config configs\dqn_edge_small_20edge_6cloud.json
 D:\Miniconda\envs\py310\python.exe tools\train_dream.py --config configs\dream_dqn.json
-D:\Miniconda\envs\py310\python.exe tools\train_oo_actor_critic.py --config configs\oo_actor_critic.json
+D:\Miniconda\envs\py310\python.exe tools\train_oo_actor_critic.py --config configs\oo_actor_critic_small_20edge_6cloud.json
 D:\Miniconda\envs\py310\python.exe tools\train_hirl.py --config configs\hirl_td3_ddqn.json
 ```
 

@@ -22,7 +22,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.D3QN.hierarchical_d3qn_agent import HierarchicalD3QNAgent
 from src.D3QN.reward import HierarchicalObjective
 from src.ppo.hierarchical_rollout import HighRolloutBuffer, LowRolloutBuffer
-from tools.hierarchical_common import build_env, build_resources, build_workflows, load_json
+from tools.hierarchical_common import (
+    DEADLINE_TYPES,
+    apply_deadline_type,
+    build_env,
+    build_resources,
+    build_workflows,
+    load_json,
+)
 from tools.train_hierarchical_d3qn import collect_d3qn_episode
 
 
@@ -67,6 +74,15 @@ def parse_args():
         "--modes",
         default="d3qn_sac,heft_same_sac",
         help="Subset of d3qn_sac,heft_same_sac.",
+    )
+    parser.add_argument(
+        "--deadline-type",
+        choices=DEADLINE_TYPES,
+        default=None,
+        help=(
+            "Deadline regime to evaluate under (tight=P(2x)=0.8, medium=0.5, "
+            "loose=0.2). Defaults to the config value."
+        ),
     )
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--smoke-test", action="store_true")
@@ -386,7 +402,7 @@ def main():
     args = parse_args()
     if args.num_seeds <= 0:
         raise ValueError("--num-seeds must be positive.")
-    config = load_json(args.config)
+    config = apply_deadline_type(load_json(args.config), args.deadline_type)
     checkpoint_path = resolve_path(args.checkpoint)
     workflow_counts = parse_positive_ints(args.workflow_counts)
     vm_layouts = parse_vm_layouts(args.vm_layouts)

@@ -216,7 +216,10 @@ class DVFSAwareHighStateEncoder(HierarchicalStateEncoder):
             )
 
         global_features = self.high_global_features(
-            ready_tasks, servers, current_time
+            ready_tasks,
+            servers,
+            current_time,
+            context.get("global_urgency_metrics", {}),
         )
         current_task_features = (
             task_features[0]

@@ -221,10 +221,10 @@ class TestHierarchicalSafePPO(unittest.TestCase):
         self.assertEqual(TASK_FEATURE_DIM, 3)
         self.assertEqual(SERVER_FEATURE_DIM, 21)
         self.assertEqual(GLOBAL_FEATURE_DIM, 5)
-        self.assertEqual(LOW_STATE_FEATURE_DIM, 9)
+        self.assertEqual(LOW_STATE_FEATURE_DIM, 11)
         encoder = HierarchicalStateEncoder({"max_servers": 3, "max_ready_tasks": 4})
         self.assertEqual(encoder.high_state_dim, self.high_state_dim_for_three_servers())
-        self.assertEqual(encoder.low_state_dim, 9)
+        self.assertEqual(encoder.low_state_dim, 11)
 
     def test_high_state_uses_server_history_metrics(self):
         encoder = HierarchicalStateEncoder({"max_servers": 3, "max_ready_tasks": 4})

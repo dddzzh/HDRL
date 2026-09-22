@@ -52,6 +52,7 @@ class DualHeadConstrainedD3QN:
         batch_size=256,
         max_grad_norm=1.0,
         deadline_positive_fraction=0.3,
+        nonnegative_deadline_q=False,
         device="auto",
         seed=42,
     ):
@@ -70,6 +71,7 @@ class DualHeadConstrainedD3QN:
         self.deadline_positive_fraction = float(deadline_positive_fraction)
         if not 0.0 <= self.deadline_positive_fraction <= 1.0:
             raise ValueError("deadline_positive_fraction must be in [0, 1].")
+        self.nonnegative_deadline_q = bool(nonnegative_deadline_q)
         self.rng = np.random.default_rng(int(seed))
         self.device = resolve_agent_device(device)
 
@@ -131,6 +133,8 @@ class DualHeadConstrainedD3QN:
         with torch.no_grad():
             energy = self.energy_q_eval(state)[0]
             deadline = self.deadline_q_eval(state)[0]
+            if self.nonnegative_deadline_q:
+                deadline = torch.clamp(deadline, min=0.0)
         return (
             energy.detach().cpu().numpy().astype(np.float64),
             deadline.detach().cpu().numpy().astype(np.float64),
@@ -138,6 +142,8 @@ class DualHeadConstrainedD3QN:
 
     def combined_action_q_values(self, observation, deadline_lambda):
         energy, deadline = self.action_q_values(observation)
+        if self.nonnegative_deadline_q:
+            deadline = np.maximum(deadline, 0.0)
         return energy - float(deadline_lambda) * deadline, energy, deadline
 
     def choose_action_from_values(self, values, action_mask, *, is_train=True):
@@ -243,6 +249,8 @@ class DualHeadConstrainedD3QN:
         with torch.no_grad():
             energy = self.energy_q_eval(next_states)
             deadline = self.deadline_q_eval(next_states)
+            if self.nonnegative_deadline_q:
+                deadline = torch.clamp(deadline, min=0.0)
             combined = energy - float(deadline_lambda) * deadline
             combined = combined.masked_fill(~next_masks, -1e9)
             return torch.argmax(combined, dim=-1)
@@ -257,6 +265,7 @@ class DualHeadConstrainedD3QN:
         gamma,
         deadline_lambda,
         sample_weights=None,
+        nonnegative_target=False,
     ):
         states = torch.as_tensor(
             batch["states"], dtype=torch.float32, device=self.device
@@ -283,6 +292,8 @@ class DualHeadConstrainedD3QN:
                 next_states, next_masks, deadline_lambda
             )
             next_q = target_network(next_states)[row, next_actions]
+            if nonnegative_target:
+                next_q = torch.clamp(next_q, min=0.0)
             no_valid = next_masks.sum(dim=-1) <= 0
             next_q = torch.where(
                 dones | no_valid, torch.zeros_like(next_q), next_q
@@ -322,6 +333,7 @@ class DualHeadConstrainedD3QN:
             gamma=self.deadline_gamma,
             deadline_lambda=deadline_lambda,
             sample_weights=deadline_weights,
+            nonnegative_target=self.nonnegative_deadline_q,
         )
         if not bool(torch.isfinite(energy_loss + deadline_loss).item()):
             raise FloatingPointError("Dual-head D3QN loss contains NaN or Inf.")
@@ -412,6 +424,8 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
         "dense_normalized_makespan",
         "dense_normalized_makespan_crossing",
         "dense_normalized_makespan_miss_credit",
+        "episode_failure_counterfactual_credit",
+        "dense_miss_plus_episode_failure_credit",
     }
 
     def __init__(self, config=None, seed=42):
@@ -436,6 +450,25 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
         )
         if self.deadline_miss_penalty < 0.0:
             raise ValueError("deadline_miss_penalty must be non-negative.")
+        # beta_q.  Must match agent.high.deadline_queue_weight read by the
+        # reward objective, which produces the per-step normalized wait.
+        self.deadline_queue_weight = float(
+            config.get("deadline_queue_weight", 0.0)
+        )
+        if self.deadline_queue_weight < 0.0:
+            raise ValueError("deadline_queue_weight must be non-negative.")
+        self.deadline_sub_weight = float(
+            config.get("deadline_sub_weight", 0.0)
+        )
+        if self.deadline_sub_weight < 0.0:
+            raise ValueError("deadline_sub_weight must be non-negative.")
+        self.deadline_future_regret_weight = float(
+            config.get("deadline_future_regret_weight", 0.0)
+        )
+        if self.deadline_future_regret_weight < 0.0:
+            raise ValueError(
+                "deadline_future_regret_weight must be non-negative."
+            )
         self.agent_R = DualHeadConstrainedD3QN(
             state_dim=self.encoder.high_state_dim,
             action_dim=self.action_dim,
@@ -459,6 +492,9 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
             max_grad_norm=float(config.get("max_grad_norm", 1.0)),
             deadline_positive_fraction=float(
                 config.get("deadline_positive_fraction", 0.3)
+            ),
+            nonnegative_deadline_q=bool(
+                config.get("nonnegative_deadline_q", False)
             ),
             device=config.get("device", "auto"),
             seed=seed,
@@ -606,12 +642,34 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
 
     @staticmethod
     def workflow_dense_miss_credit_deadline_costs(
-        buffer, *, miss_penalty=1.0
+        buffer, *, miss_penalty=1.0, queue_weight=0.0,
+        sub_deadline_weight=0.0, future_regret_weight=0.0
     ):
-        """Return Delta-C/D plus final miss credit distributed by Delta-C."""
+        """Return Delta-C/D plus final miss credit distributed by Delta-C.
+
+        ``queue_weight`` (beta_q) adds the realized server-contention wait of
+        each task.  Delta-C_t is zero for every task that is not the current
+        longest pole of its own workflow, so without this term such a task is
+        invisible to the Deadline head *twice*: it gets no dense cost, and --
+        because the terminal miss credit is distributed proportionally to
+        Delta-C_t -- no share of the miss penalty either, while the energy head
+        still pays it in full.  The queue term therefore enters both the dense
+        cost and the credit weights; adding it to only one leaves half the
+        blind spot in place.  ``queue_weight = 0.0`` reproduces the previous
+        targets exactly.
+        """
         miss_penalty = float(miss_penalty)
         if miss_penalty < 0.0:
             raise ValueError("miss_penalty must be non-negative.")
+        queue_weight = float(queue_weight)
+        if queue_weight < 0.0:
+            raise ValueError("queue_weight must be non-negative.")
+        sub_deadline_weight = float(sub_deadline_weight)
+        if sub_deadline_weight < 0.0:
+            raise ValueError("sub_deadline_weight must be non-negative.")
+        future_regret_weight = float(future_regret_weight)
+        if future_regret_weight < 0.0:
+            raise ValueError("future_regret_weight must be non-negative.")
         costs = np.zeros(buffer.size, dtype=np.float32)
         misses = {}
         for workflow_id, indices in buffer.workflow_groups():
@@ -622,22 +680,162 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
             completion = float(buffer.partial_makespans[final_index])
             miss = float(completion > final_deadline + EPS)
             misses[str(workflow_id)] = miss
+            deadlines = np.asarray(
+                [max(float(buffer.deadline_limits[index]), EPS) for index in indices],
+                dtype=np.float64,
+            )
+            # Delta-C_t / D_w, telescoping to C_w / D_w over the workflow.
             increments = np.asarray(
                 [max(0.0, float(buffer.deadline_costs[index])) for index in indices],
                 dtype=np.float64,
+            ) / deadlines
+            # beta_q * q_t / (N_w * D_w), already normalized by the reward.
+            queue_costs = queue_weight * np.asarray(
+                [
+                    max(
+                        0.0,
+                        float(
+                            buffer.infos[index].get(
+                                "high_queue_delay_normalized", 0.0
+                            )
+                        ),
+                    )
+                    for index in indices
+                ],
+                dtype=np.float64,
             )
-            total_increment = float(increments.sum())
-            if total_increment <= EPS:
+            sub_deadline_costs = sub_deadline_weight * np.asarray(
+                [
+                    max(
+                        0.0,
+                        float(
+                            buffer.infos[index].get(
+                                "high_sub_deadline_normalized", 0.0
+                            )
+                        ),
+                    )
+                    for index in indices
+                ],
+                dtype=np.float64,
+            )
+            future_regret_costs = future_regret_weight * np.asarray(
+                [
+                    max(
+                        0.0,
+                        float(
+                            buffer.infos[index].get(
+                                "high_future_finish_regret_normalized", 0.0
+                            )
+                        ),
+                    )
+                    for index in indices
+                ],
+                dtype=np.float64,
+            )
+            dense = (
+                increments
+                + queue_costs
+                + sub_deadline_costs
+                + future_regret_costs
+            )
+            total_dense = float(dense.sum())
+            if total_dense <= EPS:
                 weights = np.full(len(indices), 1.0 / max(len(indices), 1))
             else:
-                weights = increments / total_increment
+                weights = dense / total_dense
             for local_index, index in enumerate(indices):
-                deadline = max(float(buffer.deadline_limits[index]), EPS)
                 costs[index] = float(
-                    increments[local_index] / deadline
+                    dense[local_index]
                     + miss_penalty * miss * weights[local_index]
                 )
         return costs, misses
+
+    @staticmethod
+    def episode_failure_counterfactual_deadline_costs(
+        buffer, *, episode_deadline_target=0.92
+    ):
+        """Distribute one ESP-aligned failure cost over the real episode chain.
+
+        The dual observes ``1{episode DSR < target}``, so the Deadline head must
+        learn the same total cost.  A failed episode contributes exactly one;
+        a successful episode contributes zero.  Within a failed episode the
+        cost is assigned in proportion to the avoidable predicted completion
+        loss of each selected server.  The chronological replay chain is kept
+        unchanged because interleaved workflows share server queues.
+        """
+        episode_deadline_target = float(episode_deadline_target)
+        if not 0.0 < episode_deadline_target <= 1.0:
+            raise ValueError("episode_deadline_target must be in (0, 1].")
+        costs = np.zeros(buffer.size, dtype=np.float32)
+        misses = {}
+        for workflow_id, indices in buffer.workflow_groups():
+            final_index = indices[-1]
+            deadline = max(float(buffer.deadline_limits[final_index]), EPS)
+            completion = float(buffer.partial_makespans[final_index])
+            misses[str(workflow_id)] = float(completion > deadline + EPS)
+        workflow_count = len(misses)
+        success_rate = (
+            1.0 - float(sum(misses.values())) / workflow_count
+            if workflow_count
+            else 1.0
+        )
+        episode_failed = float(
+            success_rate < episode_deadline_target - 1e-9
+        )
+        responsibilities = np.asarray(
+            [
+                max(
+                    0.0,
+                    float(
+                        buffer.infos[index].get(
+                            "high_future_finish_regret_normalized", 0.0
+                        )
+                    ),
+                )
+                for index in range(buffer.size)
+            ],
+            dtype=np.float64,
+        )
+        responsibility_total = float(responsibilities.sum())
+        if episode_failed and buffer.size:
+            if responsibility_total <= EPS:
+                weights = np.full(buffer.size, 1.0 / buffer.size)
+            else:
+                weights = responsibilities / responsibility_total
+            costs[:] = np.asarray(episode_failed * weights, dtype=np.float32)
+        return costs, misses, episode_failed, responsibility_total
+
+    @classmethod
+    def dense_miss_plus_episode_failure_deadline_costs(
+        cls,
+        buffer,
+        *,
+        episode_deadline_target=0.92,
+        miss_penalty=1.0,
+        queue_weight=0.0,
+        sub_deadline_weight=0.0,
+        future_regret_weight=0.0,
+    ):
+        """Keep the proven dense target and add one ESP failure credit."""
+        costs, misses = cls.workflow_dense_miss_credit_deadline_costs(
+            buffer,
+            miss_penalty=miss_penalty,
+            queue_weight=queue_weight,
+            sub_deadline_weight=sub_deadline_weight,
+            future_regret_weight=future_regret_weight,
+        )
+        esp_costs, _, episode_failed, responsibility_total = (
+            cls.episode_failure_counterfactual_deadline_costs(
+                buffer,
+                episode_deadline_target=episode_deadline_target,
+            )
+        )
+        return (
+            costs + float(miss_penalty) * esp_costs,
+            misses,
+            episode_failed,
+            responsibility_total,
+        )
 
     def remember_from_high_buffer(self, buffer):
         if buffer.size == 0:
@@ -647,10 +845,51 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
                 "binary_deadline_cost_total": 0.0,
             }
         crossing_count = 0
+        episode_failed = 0.0
+        responsibility_total = 0.0
         if self.deadline_head_cost_mode == "dense_normalized_makespan_miss_credit":
             credits, misses = self.workflow_dense_miss_credit_deadline_costs(
                 buffer,
                 miss_penalty=self.deadline_miss_penalty,
+                queue_weight=self.deadline_queue_weight,
+                sub_deadline_weight=self.deadline_sub_weight,
+                future_regret_weight=self.deadline_future_regret_weight,
+            )
+        elif self.deadline_head_cost_mode == "episode_failure_counterfactual_credit":
+            (
+                credits,
+                misses,
+                episode_failed,
+                responsibility_total,
+            ) = self.episode_failure_counterfactual_deadline_costs(
+                buffer,
+                episode_deadline_target=float(
+                    getattr(
+                        self.deadline_lagrangian,
+                        "episode_deadline_target",
+                        0.92,
+                    )
+                ),
+            )
+        elif self.deadline_head_cost_mode == "dense_miss_plus_episode_failure_credit":
+            (
+                credits,
+                misses,
+                episode_failed,
+                responsibility_total,
+            ) = self.dense_miss_plus_episode_failure_deadline_costs(
+                buffer,
+                episode_deadline_target=float(
+                    getattr(
+                        self.deadline_lagrangian,
+                        "episode_deadline_target",
+                        0.92,
+                    )
+                ),
+                miss_penalty=self.deadline_miss_penalty,
+                queue_weight=self.deadline_queue_weight,
+                sub_deadline_weight=self.deadline_sub_weight,
+                future_regret_weight=self.deadline_future_regret_weight,
             )
         elif (
             self.deadline_head_cost_mode
@@ -694,6 +933,8 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
             info["dual_head_workflow_miss"] = float(
                 misses[str(buffer.workflow_ids[index])]
             )
+            info["dual_head_episode_failed"] = float(episode_failed)
+            info["dual_head_episode_credit"] = float(deadline_cost)
             self.agent_R.remember(
                 buffer.states[index],
                 self.encode_action(buffer.primary_actions[index]),
@@ -711,10 +952,15 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
             "binary_deadline_cost_total": float(sum(misses.values())),
             "binary_missed_workflows": float(sum(misses.values())),
             "deadline_head_crossing_count": float(crossing_count),
+            "deadline_head_episode_failed": float(episode_failed),
+            "deadline_head_responsibility_total": float(responsibility_total),
             "deadline_crossing_penalty": float(
                 self.deadline_crossing_penalty
             ),
             "deadline_miss_penalty": float(self.deadline_miss_penalty),
+            "deadline_future_regret_weight": float(
+                self.deadline_future_regret_weight
+            ),
             "dense_deadline_cost_enabled": float(
                 self.deadline_head_cost_mode
                 in {
@@ -740,6 +986,9 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
                     self.deadline_crossing_penalty
                 ),
                 "deadline_miss_penalty": float(self.deadline_miss_penalty),
+                "deadline_future_regret_weight": float(
+                    self.deadline_future_regret_weight
+                ),
                 "dense_deadline_cost_enabled": float(
                     self.deadline_head_cost_mode
                     in {
@@ -777,6 +1026,12 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
             "deadline_miss_penalty": float(
                 remember.get("deadline_miss_penalty", self.deadline_miss_penalty)
             ),
+            "deadline_future_regret_weight": float(
+                remember.get(
+                    "deadline_future_regret_weight",
+                    self.deadline_future_regret_weight,
+                )
+            ),
             "dense_deadline_cost_enabled": float(
                 remember.get("dense_deadline_cost_enabled", 0.0)
             ),
@@ -801,6 +1056,7 @@ class DualHeadHighLevelD3QNAgent(HighLevelD3QNAgent):
             "deadline_head_crossing_count",
             "deadline_crossing_penalty",
             "deadline_miss_penalty",
+            "deadline_future_regret_weight",
             "dense_deadline_cost_enabled",
         }
         if updates:
@@ -855,6 +1111,9 @@ class DualHeadHierarchicalD3QNAgent(HierarchicalD3QNAgent):
             ),
             "deadline_miss_penalty": float(
                 self.high_agent.deadline_miss_penalty
+            ),
+            "deadline_future_regret_weight": float(
+                self.high_agent.deadline_future_regret_weight
             ),
             "dual_head_state_dict": self.high_agent.agent_R.state_dict(
                 include_replay=include_replay
@@ -945,6 +1204,22 @@ class DualHeadHierarchicalD3QNAgent(HierarchicalD3QNAgent):
                 "Dual-head checkpoint miss-penalty mismatch: "
                 f"checkpoint={float(saved_miss_penalty)!r}, "
                 f"config={self.high_agent.deadline_miss_penalty!r}."
+            )
+        saved_future_regret_weight = payload.get(
+            "deadline_future_regret_weight"
+        )
+        if (
+            saved_future_regret_weight is not None
+            and not np.isclose(
+                float(saved_future_regret_weight),
+                self.high_agent.deadline_future_regret_weight,
+            )
+        ):
+            raise ValueError(
+                "Dual-head checkpoint future-regret-weight mismatch: "
+                f"checkpoint={float(saved_future_regret_weight)!r}, "
+                "config="
+                f"{self.high_agent.deadline_future_regret_weight!r}."
             )
         self.high_agent.agent_R.load_state_dict(payload["dual_head_state_dict"])
         low_state = payload.get("low_model_state_dict")

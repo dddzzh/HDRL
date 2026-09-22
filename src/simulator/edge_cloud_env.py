@@ -17,6 +17,7 @@ from src.simulator.resource import (
     clone_runtime_resources,
     compute_energy,
     compute_execution_time,
+    compute_rho_energy_efficient,
     compute_transfer_time,
 )
 from src.simulator.reliability import task_reliability_from_server, workflow_reliability
@@ -56,19 +57,18 @@ class EdgeCloudWorkflowEnv:
         for state in self.workflow_states:
             self._initialize_deadline_fields(state)
             self._initialize_sub_deadline_fields(state)
-        self.workflow_upward_ranks = {}
-        if self.ready_task_order == "upward_rank" or bool(
-            self.sim_config.get("compute_upward_rank_feature", False)
-        ):
-            self.workflow_upward_ranks = {
-                state["workflow_id"]: calculate_upward_ranks(
-                    state["workflow"],
-                    self.servers,
-                    self.link_bandwidth_mbps,
-                    rho=float(self.sim_config.get("upward_rank_rho", 1.0)),
-                )
-                for state in self.workflow_states
-            }
+        # The scheduler now always exposes global remaining-critical-path
+        # pressure to both hierarchy levels, so ranks are part of the canonical
+        # environment state rather than an optional ordering-only feature.
+        self.workflow_upward_ranks = {
+            state["workflow_id"]: calculate_upward_ranks(
+                state["workflow"],
+                self.servers,
+                self.link_bandwidth_mbps,
+                rho=float(self.sim_config.get("upward_rank_rho", 1.0)),
+            )
+            for state in self.workflow_states
+        }
         self.workflow_by_id = {
             state["workflow_id"]: state for state in self.workflow_states
         }
@@ -153,6 +153,52 @@ class EdgeCloudWorkflowEnv:
                 current_task["task_id"],
             )
         return state
+
+    def global_critical_pressure_metrics(self) -> dict:
+        """Summarise deadline pressure over every released unfinished workflow."""
+        pressures = []
+        for workflow_state in self.workflow_states:
+            if not workflow_state["released"] or workflow_state["completed"]:
+                continue
+            workflow_id = str(workflow_state["workflow_id"])
+            ranks = self.workflow_upward_ranks.get(workflow_id, {})
+            remaining_candidates = []
+            for task_id, status in workflow_state["task_status"].items():
+                if status == "finished":
+                    continue
+                rank = max(float(ranks.get(int(task_id), 0.0)), 0.0)
+                if status == "running":
+                    task = self._get_task(workflow_state["workflow"], int(task_id))
+                    mean_exec = sum(
+                        compute_execution_time(task["workload_cycles"], server, rho=1.0)
+                        for server in self.servers
+                    ) / max(len(self.servers), 1)
+                    final_plan = workflow_state["task_final_plan"].get(int(task_id))
+                    if final_plan is not None:
+                        current_remaining = max(
+                            0.0,
+                            float(final_plan["final_aft"]) - float(self.current_time),
+                        )
+                        rank = current_remaining + max(0.0, rank - mean_exec)
+                remaining_candidates.append(rank)
+            remaining_cp = max(remaining_candidates, default=0.0)
+            remaining_deadline = max(
+                float(self.workflow_absolute_deadline(workflow_state))
+                - float(self.current_time),
+                1e-12,
+            )
+            pressures.append(remaining_cp / remaining_deadline)
+
+        server_count = max(len(self.servers), 1)
+        return {
+            "active_workflow_count": int(len(pressures)),
+            "global_critical_pressure": float(
+                np.tanh(sum(pressures) / server_count)
+            ),
+            "worst_critical_pressure": float(
+                np.clip(max(pressures, default=0.0), 0.0, 2.0) / 2.0
+            ),
+        }
 
     def step(self, action):
         workflow_id = str(action.get("workflow_id"))
@@ -302,6 +348,18 @@ class EdgeCloudWorkflowEnv:
         server = self._get_server(server_id)
         rho_hardware_min = float(server.get("min_rho", self.sim_config.get("rho_min", 0.1)))
         rho_hardware_min = min(max(rho_hardware_min, 0.0), 1.0)
+        rho_energy_efficient = float(
+            server.get("rho_energy_efficient", compute_rho_energy_efficient(server))
+        )
+        rho_energy_efficient = min(max(rho_energy_efficient, rho_hardware_min), 1.0)
+        # Below rho_ee, slowing down costs MORE energy, so that part of the action
+        # range is dominated.  Clamping the policy at max(f_min, f_ee) is the standard
+        # treatment (Li & Quan, JSA 2015; Xie et al., JPDC 2019).  Opt-in so every
+        # existing experiment keeps the plain hardware floor.
+        if str(self.sim_config.get("dvfs_action_floor", "hardware")) == "energy_efficient":
+            rho_action_min = rho_energy_efficient
+        else:
+            rho_action_min = rho_hardware_min
         plan_rho1 = self.estimate_replica_plan(
             task=task,
             server=server,
@@ -320,12 +378,42 @@ class EdgeCloudWorkflowEnv:
                 task_sub_deadline_absolute,
             ) = self.task_sub_deadline(workflow_state, task_id)
         final_download_time = self._estimate_final_download_time_if_exit(workflow_state, task_id, server)
-        task_latest_finish_time = float(workflow_absolute_deadline) - float(final_download_time)
+        remaining_critical_path_time = 0.0
+        if bool(self.sim_config.get("future_critical_path_safety", False)):
+            ranks = self.workflow_upward_ranks.get(workflow_id)
+            if ranks is None or task_id not in ranks:
+                raise RuntimeError(
+                    "future_critical_path_safety requires HEFT upward ranks for "
+                    f"workflow={workflow_id}, task={task_id}."
+                )
+            mean_current_execution = sum(
+                compute_execution_time(task["workload_cycles"], candidate, rho=1.0)
+                for candidate in self.servers
+            ) / max(len(self.servers), 1)
+            # HEFT rank_u is current mean execution plus the longest average
+            # communication/execution tail.  Subtracting the current task leaves
+            # exactly the remaining critical-path estimate that must retain slack.
+            remaining_critical_path_time = max(
+                0.0, float(ranks[task_id]) - float(mean_current_execution)
+            )
+        task_latest_finish_time = (
+            float(workflow_absolute_deadline)
+            - float(final_download_time)
+            - remaining_critical_path_time
+        )
         margin = float(self.sim_config.get("low_deadline_safety_margin_ratio", 0.05))
         safe_execution_budget = (1.0 - margin) * (
             float(task_latest_finish_time) - float(plan_rho1["ast"])
         )
         execution_time_rho_1 = float(plan_rho1["exec_time"])
+        predicted_workflow_finish_rho_1 = (
+            float(plan_rho1["aft"])
+            + remaining_critical_path_time
+            + float(final_download_time)
+        )
+        future_slack_ratio = (
+            float(workflow_absolute_deadline) - predicted_workflow_finish_rho_1
+        ) / max(float(workflow_relative_deadline), 1e-12)
         tolerance = float(self.sim_config.get("low_rho_feasibility_tolerance", 1e-8))
         if safe_execution_budget <= 0.0:
             rho_deadline_required = float("inf")
@@ -334,8 +422,8 @@ class EdgeCloudWorkflowEnv:
         else:
             rho_deadline_required = execution_time_rho_1 / max(safe_execution_budget, 1e-12)
             low_action_feasible = rho_deadline_required <= 1.0 + tolerance
-            rho_safe = 1.0 if not low_action_feasible else max(rho_hardware_min, rho_deadline_required)
-            rho_safe = min(max(rho_safe, rho_hardware_min), 1.0)
+            rho_safe = 1.0 if not low_action_feasible else max(rho_action_min, rho_deadline_required)
+            rho_safe = min(max(rho_safe, rho_action_min), 1.0)
         return {
             "workflow_id": workflow_id,
             "task_id": task_id,
@@ -353,8 +441,21 @@ class EdgeCloudWorkflowEnv:
             "execution_time_rho_1": execution_time_rho_1,
             "task_reliability_rho_1": float(plan_rho1["reliability"]),
             "task_latest_finish_time": float(task_latest_finish_time),
+            "remaining_critical_path_time": float(remaining_critical_path_time),
+            "predicted_workflow_finish_rho_1": float(
+                predicted_workflow_finish_rho_1
+            ),
+            "future_slack_ratio": float(future_slack_ratio),
+            "future_deadline_feasible": bool(future_slack_ratio >= -tolerance),
             "safe_execution_budget": float(safe_execution_budget),
-            "rho_hardware_min": float(rho_hardware_min),
+            # rho_action_min is the canonical floor the policy may use.  The legacy
+            # rho_hardware_min key aliases it so every existing consumer picks the
+            # floor up unchanged; it equals rho_physical_min whenever
+            # dvfs_action_floor is "hardware" (the default).
+            "rho_action_min": float(rho_action_min),
+            "rho_hardware_min": float(rho_action_min),
+            "rho_physical_min": float(rho_hardware_min),
+            "rho_energy_efficient": float(rho_energy_efficient),
             "rho_deadline_required": float(rho_deadline_required),
             "rho_safe": float(rho_safe),
             "low_action_feasible": bool(low_action_feasible),
@@ -371,6 +472,7 @@ class EdgeCloudWorkflowEnv:
         primary_server_mask = np.zeros(server_count, dtype=bool)
         server_safety_metrics = {}
         server_energy_refs = []
+        global_urgency = self.global_critical_pressure_metrics()
 
         for index, server in enumerate(self.servers):
             server_id = int(server["id"])
@@ -401,12 +503,26 @@ class EdgeCloudWorkflowEnv:
                     else float(rho_deadline_required)
                 ),
                 "rho_reliability": None,
+                "rho_action_min": float(metrics["rho_action_min"]),
+                "rho_hardware_min": float(metrics["rho_hardware_min"]),
+                "rho_physical_min": float(metrics["rho_physical_min"]),
+                "rho_energy_efficient": float(metrics["rho_energy_efficient"]),
                 "low_action_feasible": low_action_feasible,
                 "estimated_ast": float(metrics["estimated_ast"]),
                 "execution_time_rho_1": float(metrics["execution_time_rho_1"]),
                 "task_reliability_rho_1": float(metrics["task_reliability_rho_1"]),
                 "safe_execution_budget": float(metrics["safe_execution_budget"]),
                 "task_latest_finish_time": float(metrics["task_latest_finish_time"]),
+                "remaining_critical_path_time": float(
+                    metrics["remaining_critical_path_time"]
+                ),
+                "predicted_workflow_finish_rho_1": float(
+                    metrics["predicted_workflow_finish_rho_1"]
+                ),
+                "future_slack_ratio": float(metrics["future_slack_ratio"]),
+                "future_deadline_feasible": bool(
+                    metrics["future_deadline_feasible"]
+                ),
                 "current_time": float(metrics["current_time"]),
                 "workflow_relative_deadline": float(metrics["workflow_relative_deadline"]),
                 "workflow_task_count": float(metrics["workflow_task_count"]),
@@ -416,6 +532,12 @@ class EdgeCloudWorkflowEnv:
                 ),
                 "task_sub_deadline_absolute": metrics.get(
                     "task_sub_deadline_absolute"
+                ),
+                "global_critical_pressure": float(
+                    global_urgency["global_critical_pressure"]
+                ),
+                "worst_critical_pressure": float(
+                    global_urgency["worst_critical_pressure"]
                 ),
                 "primary_energy_ref_rho1": primary_energy_ref_rho1,
                 **self._server_history_metrics(server_id),
@@ -445,6 +567,7 @@ class EdgeCloudWorkflowEnv:
             "backup_pair_mask": backup_pair_mask,
             "backup_enabled": bool(self.enable_backup_duplication),
             "server_safety_metrics": server_safety_metrics,
+            "global_urgency_metrics": global_urgency,
             "task_energy_scale": task_energy_scale,
             "primary_server_mask_mode": "structural_only",
             "shield_relaxed": False,
@@ -592,6 +715,9 @@ class EdgeCloudWorkflowEnv:
             "exec_time": exec_time,
             "upload_time": upload_time,
             "transfer_time": transfer_time,
+            "parent_transfer_times": dict(
+                ready_info.get("parent_transfer_times", {})
+            ),
             "server_queue_waiting_time": server_queue_waiting_time,
             "energy": energy,
             "reliability": reliability,
@@ -1406,6 +1532,7 @@ class EdgeCloudWorkflowEnv:
                 "dependency_ready_time": arrival_time,
                 "data_ready_time": arrival_time,
                 "transfer_time": 0.0,
+                "parent_transfer_times": {},
                 "upload_time": 0.0,
                 "backup_path_uses_primary_fallback": False,
             }
@@ -1413,6 +1540,7 @@ class EdgeCloudWorkflowEnv:
         dependency_times = []
         data_ready_times = []
         max_transfer_time = 0.0
+        parent_transfer_times = {}
         for parent_id in parents:
             parent_status = workflow_state["task_status"].get(parent_id)
             if parent_status != "finished":
@@ -1443,6 +1571,7 @@ class EdgeCloudWorkflowEnv:
 
             dependency_times.append(source_aft)
             if source_server_id == int(target_server_id):
+                parent_transfer_times[int(parent_id)] = 0.0
                 data_ready_times.append(source_aft)
                 continue
 
@@ -1452,6 +1581,7 @@ class EdgeCloudWorkflowEnv:
                 data_size_mb,
                 self._link_bandwidth(source_server["type"], target_server["type"]),
             )
+            parent_transfer_times[int(parent_id)] = float(transfer_time)
             max_transfer_time = max(max_transfer_time, transfer_time)
             data_ready_times.append(source_aft + transfer_time)
 
@@ -1459,6 +1589,7 @@ class EdgeCloudWorkflowEnv:
             "dependency_ready_time": max(dependency_times),
             "data_ready_time": max(data_ready_times),
             "transfer_time": max_transfer_time,
+            "parent_transfer_times": parent_transfer_times,
             "upload_time": 0.0,
             "backup_path_uses_primary_fallback": fallback_used,
         }
@@ -1906,6 +2037,11 @@ class EdgeCloudWorkflowEnv:
                 {
                     "task_id": int(task_id),
                     "workflow_id": workflow_state["workflow_id"],
+                    "parents": list(
+                        self._parent_task_ids(
+                            workflow_state["workflow"], int(task_id)
+                        )
+                    ),
                     "current_time": primary["current_time"],
                     "workflow_arrival_time": primary["workflow_arrival_time"],
                     "dependency_ready_time": primary["dependency_ready_time"],
@@ -1921,6 +2057,9 @@ class EdgeCloudWorkflowEnv:
                     "data_ready_time_primary": primary["data_ready_time"],
                     "base_ready_time_primary": primary["base_ready_time"],
                     "task_communication_time_primary": primary["task_communication_time"],
+                    "parent_transfer_times_primary": dict(
+                        primary.get("parent_transfer_times", {})
+                    ),
                     "task_waiting_time_primary": primary["task_waiting_time"],
                     "task_total_time_primary": primary["task_total_time"],
                     "server_queue_waiting_time_primary": primary["server_queue_waiting_time"],

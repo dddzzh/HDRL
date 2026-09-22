@@ -124,9 +124,31 @@ def test_common_reward_keeps_normalized_time_and_energy_objectives_separate():
             "workflow_task_count": 10.0,
         }
     )
-    assert time_reward == pytest.approx(-0.8)
+    assert time_reward == pytest.approx(-2.6)
     assert energy_reward == pytest.approx(0.03)
-    assert components["reward"] == pytest.approx(-0.77)
+    assert components["reward"] == pytest.approx(-2.57)
+
+
+def test_common_reward_charges_reliability_to_existing_qos_head():
+    reward = DQNEdgeCommonReward(
+        {
+            "deadline_violation_weight": 0.0,
+            "fixed_reliability_lambda": 2.0,
+        }
+    )
+    time_reward, energy_reward, components = reward.split_feedback(
+        {
+            "normalized_makespan_increment": 0.2,
+            "high_deadline_violation_delta": 0.0,
+            "reliability_violation_delta": 0.3,
+            "task_energy_scale": 100.0,
+            "primary_energy_actual": 100.0,
+            "workflow_task_count": 10.0,
+        }
+    )
+    assert time_reward == pytest.approx(-2.6)
+    assert energy_reward == pytest.approx(0.0)
+    assert components["reliability_penalty"] == pytest.approx(0.6)
 
 
 def test_rank_cache_is_cleared_between_episodes():

@@ -36,12 +36,17 @@ from src.ppo.hierarchical_state import (
 )
 from src.ppo.hierarchical_rollout import HighRolloutBuffer, LowRolloutBuffer
 from src.shared.hierarchical_state_reward import build_shared_state_encoder
+from src.simulator.deadline import DEADLINE_PROBABILITIES
 from tools.hierarchical_common import (
+    DEADLINE_TYPES,
+    apply_deadline_type,
     build_env,
     build_resources,
     build_workflows,
+    config_deadline_type,
     configure_agent_state,
     load_json,
+    satisfaction_statistics,
 )
 from tools.train_hierarchical_d3qn import collect_d3qn_episode
 from tools.train_oo_actor_critic import collect_oo_episode
@@ -62,7 +67,7 @@ DEFAULT_OO_CHECKPOINT = (
 )
 DEFAULT_DREAM_CONFIG = "configs/dream_dqn.json"
 DEFAULT_DREAM_CHECKPOINT = "results/dream_dqn/best_checkpoint.pt"
-DEFAULT_DQN_EDGE_CONFIG = "configs/dqn_edge.json"
+DEFAULT_DQN_EDGE_CONFIG = "configs/dqn_edge_small_20edge_6cloud.json"
 DEFAULT_DQN_EDGE_CHECKPOINT = "results/dqn_edge/best_checkpoint.pt"
 DEFAULT_HIRL_CONFIG = "configs/hirl_td3_ddqn.json"
 DEFAULT_HIRL_CHECKPOINT = "results/hirl_td3_ddqn/best_checkpoint.pt"
@@ -123,6 +128,18 @@ def parse_args():
     parser.add_argument("--hirl-config", default=DEFAULT_HIRL_CONFIG)
     parser.add_argument("--hirl-checkpoint", default=DEFAULT_HIRL_CHECKPOINT)
     parser.add_argument("--scales", default="small,medium")
+    parser.add_argument(
+        "--deadline-types",
+        default=None,
+        help=(
+            "Comma-separated Deadline regimes to evaluate every mode under, "
+            "e.g. 'tight,medium,loose' (P(2x deadline) = 0.8/0.5/0.2). "
+            "Defaults to the config value only. Every regime reuses the same "
+            "checkpoints and the same seeds, and for a given seed the arrival "
+            "times and task graphs are identical, so the regimes form a paired "
+            "generalization test of one unified model."
+        ),
+    )
     parser.add_argument("--modes", default=",".join(DEFAULT_MODES))
     parser.add_argument("--seed-start", type=int, default=342000)
     parser.add_argument("--num-seeds", type=int, default=20)
@@ -178,12 +195,26 @@ def describe(values):
 
 def load_d3qn(checkpoint_path, seed):
     payload = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
-    if payload.get("checkpoint_format") != "hierarchical_d3qn_primary_v3":
-        raise RuntimeError("D3QN comparison requires a primary-only D3QN v3 checkpoint.")
+    checkpoint_format = payload.get("checkpoint_format")
+    if checkpoint_format not in {
+        "hierarchical_d3qn_primary_v3",
+        "hierarchical_reliability_aware_d3qn_v1",
+    }:
+        raise RuntimeError(
+            "D3QN comparison requires a primary-only or reliability-aware "
+            f"D3QN checkpoint; got {checkpoint_format!r}."
+        )
     checkpoint_config = copy.deepcopy(payload.get("config") or {})
     agent_cfg = copy.deepcopy(checkpoint_config.get("agent") or {})
     agent_cfg["use_low_agent"] = True
-    agent = HierarchicalD3QNAgent(agent_cfg, seed=seed)
+    if checkpoint_format == "hierarchical_reliability_aware_d3qn_v1":
+        from tools.train_reliability_aware_hierarchical_d3qn import (
+            ReliabilityAwareHierarchicalD3QNAgent,
+        )
+
+        agent = ReliabilityAwareHierarchicalD3QNAgent(agent_cfg, seed=seed)
+    else:
+        agent = HierarchicalD3QNAgent(agent_cfg, seed=seed)
     agent.load_checkpoint(checkpoint_path)
     agent.high_agent.epsilon = 0.0
     objective = HierarchicalObjective(checkpoint_config.get("objective", {}))
@@ -402,9 +433,9 @@ def run_hirl(config, resources, scheduler, seed):
 def summarize_rows(rows):
     grouped = {}
     for row in rows:
-        grouped.setdefault((row["scale"], row["mode"]), []).append(row)
+        grouped.setdefault((row["scale"], row["deadline_type"], row["mode"]), []).append(row)
     summaries = []
-    for (scale, mode), group in sorted(grouped.items()):
+    for (scale, deadline_type, mode), group in sorted(grouped.items()):
         metrics = {}
         for metric in REPORT_METRICS:
             values = [
@@ -417,33 +448,48 @@ def summarize_rows(rows):
         summaries.append(
             {
                 "scale": scale,
+                "deadline_type": deadline_type,
                 "mode": mode,
                 "num_workflows": int(group[0]["num_workflows"]),
                 "seed_start": int(min(row["eval_seed"] for row in group)),
                 "seed_end": int(max(row["eval_seed"] for row in group)),
                 "metrics": metrics,
+                # ESP over the per-seed success rates the mean above hides.
+                "deadline_satisfaction": satisfaction_statistics(
+                    row["deadline_success_rate"] for row in group
+                ),
+                "reliability_satisfaction": satisfaction_statistics(
+                    row["reliability_success_rate"] for row in group
+                ),
             }
         )
     return summaries
 
 
 def paired_energy_deltas(rows):
-    lookup = {(row["scale"], row["mode"], row["eval_seed"]): row for row in rows}
+    lookup = {
+        (row["scale"], row["deadline_type"], row["mode"], row["eval_seed"]): row
+        for row in rows
+    }
     result = {}
-    scales = sorted({row["scale"] for row in rows})
+    keys = sorted({(row["scale"], row["deadline_type"]) for row in rows})
     modes = sorted({row["mode"] for row in rows})
-    for scale in scales:
+    for scale, deadline_type in keys:
+        seeds = sorted({
+            row["eval_seed"] for row in rows
+            if row["scale"] == scale and row["deadline_type"] == deadline_type
+        })
         for mode in modes:
             deltas = []
-            for seed in sorted({row["eval_seed"] for row in rows if row["scale"] == scale}):
-                ours = lookup.get((scale, "d3qn_sac", seed))
-                other = lookup.get((scale, mode, seed))
+            for seed in seeds:
+                ours = lookup.get((scale, deadline_type, "d3qn_sac", seed))
+                other = lookup.get((scale, deadline_type, mode, seed))
                 if ours is None or other is None:
                     continue
                 denominator = max(float(ours["total_energy"]), 1e-8)
                 deltas.append(100.0 * (float(other["total_energy"]) - denominator) / denominator)
             if deltas:
-                result[(scale, mode)] = describe(deltas)
+                result[(scale, deadline_type, mode)] = describe(deltas)
     return result
 
 
@@ -484,7 +530,7 @@ def write_summary(output_dir, summaries, paired_deltas):
     for row in summaries:
         result = copy.deepcopy(row)
         result["paired_energy_delta_vs_d3qn_percent"] = paired_deltas.get(
-            (row["scale"], row["mode"])
+            (row["scale"], row["deadline_type"], row["mode"])
         )
         payload.append(result)
     with (output_dir / "comparison_summary.json").open("w", encoding="utf-8") as file:
@@ -494,6 +540,7 @@ def write_summary(output_dir, summaries, paired_deltas):
     for row in payload:
         base = {
             "scale": row["scale"],
+            "deadline_type": row["deadline_type"],
             "mode": row["mode"],
             "num_workflows": row["num_workflows"],
             "seed_start": row["seed_start"],
@@ -501,8 +548,17 @@ def write_summary(output_dir, summaries, paired_deltas):
         }
         for metric, stats in row["metrics"].items():
             csv_rows.append({**base, "metric": metric, **stats})
+        satisfaction = row.get("deadline_satisfaction") or {}
+        for name, value in sorted(satisfaction.get("esp", {}).items()):
+            csv_rows.append({**base, "metric": f"deadline_esp@{name}",
+                             "n": satisfaction["n"], "mean": value})
+        if satisfaction:
+            csv_rows.append({**base, "metric": "deadline_cvar25",
+                             "n": satisfaction["n"], "mean": satisfaction["cvar"],
+                             "min": satisfaction["min"]})
     fields = [
         "scale",
+        "deadline_type",
         "mode",
         "num_workflows",
         "seed_start",
@@ -538,18 +594,29 @@ def write_summary(output_dir, summaries, paired_deltas):
         "",
         "Energy is the complete-system total, averaged over evaluation seeds.",
         "Positive delta means more energy than D3QN+SAC.",
+        "`Deadline` is the mean per-run success rate; `ESP@g` is the fraction of",
+        "runs whose own success rate reaches g; `CVaR25` is the mean of the worst",
+        "quarter of runs. A high mean with a low CVaR25 is an unstable method.",
         "",
     ]
-    for scale in sorted({row["scale"] for row in payload}):
+    for scale, deadline_type in sorted(
+        {(row["scale"], row["deadline_type"]) for row in payload}
+    ):
+        probability = DEADLINE_PROBABILITIES[deadline_type]
         lines.extend(
             [
-                f"## {scale}",
+                f"## {scale} / deadline={deadline_type} "
+                f"(P(2x)={probability:.1f}, P(3x)={1.0 - probability:.1f})",
                 "",
-                "| Method | Energy (kJ) | Delta vs ours | Deadline | Reliability | Response (s) | rho |",
-                "|---|---:|---:|---:|---:|---:|---:|",
+                "| Method | Energy (kJ) | Delta vs ours | Deadline | ESP@0.92 "
+                "| ESP@0.95 | CVaR25 | min | Reliability | Response (s) | rho |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
-        scale_rows = [row for row in payload if row["scale"] == scale]
+        scale_rows = [
+            row for row in payload
+            if row["scale"] == scale and row["deadline_type"] == deadline_type
+        ]
         scale_rows.sort(key=lambda row: row["metrics"]["total_energy"]["mean"])
         for row in scale_rows:
             metrics = row["metrics"]
@@ -557,11 +624,17 @@ def write_summary(output_dir, summaries, paired_deltas):
             delta_text = "--" if delta is None else f"{delta['mean']:+.2f}%"
             rho = metrics.get("rho_mean", {}).get("mean")
             rho_text = "--" if rho is None else f"{rho:.3f}"
+            satisfaction = row.get("deadline_satisfaction") or {}
+            esp = satisfaction.get("esp", {})
             lines.append(
                 f"| {labels.get(row['mode'], row['mode'])} "
                 f"| {metrics['total_energy']['mean'] / 1000.0:.2f} "
                 f"| {delta_text} "
                 f"| {metrics['deadline_success_rate']['mean']:.2%} "
+                f"| {esp.get('0.92', float('nan')):.2f} "
+                f"| {esp.get('0.95', float('nan')):.2f} "
+                f"| {satisfaction.get('cvar', float('nan')):.3f} "
+                f"| {satisfaction.get('min', float('nan')):.3f} "
                 f"| {metrics['reliability_success_rate']['mean']:.2%} "
                 f"| {metrics['average_response_time']['mean']:.2f} "
                 f"| {rho_text} |"
@@ -580,6 +653,12 @@ def evaluate(args):
     hirl_config = load_json(args.hirl_config)
     scales = parse_csv_values(args.scales, {"small", "medium", "large"}, "scale")
     modes = parse_csv_values(args.modes, set(DEFAULT_MODES), "mode")
+    if args.deadline_types is None:
+        deadline_types = [config_deadline_type(config)]
+    else:
+        deadline_types = parse_csv_values(
+            args.deadline_types, set(DEADLINE_TYPES), "deadline type"
+        )
     if args.num_seeds <= 0:
         raise ValueError("--num-seeds must be positive.")
     if args.smoke_test:
@@ -594,6 +673,11 @@ def evaluate(args):
         d3qn_payload, d3qn_config, d3qn_agent, d3qn_objective = load_d3qn(
             resolve_path(args.d3qn_checkpoint), args.seed_start
         )
+        checkpoint_simulation = dict(d3qn_config.get("simulation", {}))
+        if "sub_deadline" in checkpoint_simulation:
+            config.setdefault("simulation", {})["sub_deadline"] = copy.deepcopy(
+                checkpoint_simulation["sub_deadline"]
+            )
     oo_payload = None
     oo_encoder = oo_agent = oo_objective = oo_deadline_weight = oo_encoder_name = None
     if "oo_actor_critic" in modes:
@@ -659,6 +743,8 @@ def evaluate(args):
         "workflow_seed_end": int(args.seed_start + args.num_seeds - 1),
         "num_seeds_per_scale": int(args.num_seeds),
         "scales": scales,
+        "deadline_types": deadline_types,
+        "config_deadline_type": config_deadline_type(config),
         "modes": modes,
         "num_workflows": int(config.get("generator", {}).get("num_workflows", 20)),
         "ready_task_order": str(
@@ -678,79 +764,91 @@ def evaluate(args):
             if not line.strip():
                 continue
             row = json.loads(line)
+            # Rows written before the regime sweep existed carry no
+            # deadline_type; they were produced under the config's own regime.
+            row.setdefault("deadline_type", config_deadline_type(config))
             if (
                 row.get("scale") in scales
                 and row.get("mode") in modes
+                and row.get("deadline_type") in deadline_types
                 and int(args.seed_start) <= int(row.get("eval_seed", -1)) < seed_end
             ):
                 rows.append(row)
         if rows:
             print(f"[resume] loaded={len(rows)} completed evaluations")
     completed = {
-        (str(row["scale"]), str(row["mode"]), int(row["eval_seed"])) for row in rows
+        (str(row["scale"]), str(row["deadline_type"]), str(row["mode"]),
+         int(row["eval_seed"]))
+        for row in rows
     }
     num_workflows = int(config.get("generator", {}).get("num_workflows", 20))
     for scale in scales:
-        scenario = copy.deepcopy(config)
-        scenario.setdefault("generator", {})["dataset_scale"] = DATASET_SCALE_NAMES[scale]
-        scenario.setdefault("generator", {})["num_workflows"] = num_workflows
-        print(
-            f"[scale] {scale} workflows={num_workflows} "
-            f"seeds={args.seed_start}-{args.seed_start + args.num_seeds - 1}"
-        )
-        for offset in range(int(args.num_seeds)):
-            eval_seed = int(args.seed_start + offset)
-            for mode in modes:
-                if (scale, mode, eval_seed) in completed:
-                    continue
-                with redirect_stdout(io.StringIO()):
-                    if mode == "oo_actor_critic":
-                        metrics = run_oo(
-                            scenario,
-                            resources,
-                            oo_encoder,
-                            oo_agent,
-                            oo_objective,
-                            oo_deadline_weight,
-                            eval_seed,
-                        )
-                    elif mode == "dream_dqn":
-                        metrics = run_dream(
-                            scenario, resources, dream_scheduler, eval_seed
-                        )
-                    elif mode == "hirl_td3_ddqn":
-                        metrics = run_hirl(
-                            scenario, resources, hirl_scheduler, eval_seed
-                        )
-                    elif mode == "dqn_edge":
-                        metrics = run_dqn_edge(
-                            scenario, resources, dqn_edge_runtime, eval_seed
-                        )
-                    else:
-                        metrics = run_d3qn_family(
-                            scenario,
-                            resources,
-                            d3qn_agent,
-                            d3qn_objective,
-                            eval_seed,
-                            MODE_TO_HIGH_ALGORITHM[mode],
-                        )
-                metrics = add_normalized_metrics(metrics, num_workflows)
-                row = {
-                    "scale": scale,
-                    "mode": mode,
-                    "eval_seed": eval_seed,
-                    "num_workflows": num_workflows,
-                    **metrics,
-                }
-                rows.append(row)
-                write_rows(output_dir, rows)
-                print(
-                    f"[eval] scale={scale:<6} seed={eval_seed} mode={mode:<16} "
-                    f"energy_kJ={float(metrics['total_energy']) / 1000.0:8.2f} "
-                    f"deadline={float(metrics['deadline_success_rate']):6.2%} "
-                    f"reliability={float(metrics['reliability_success_rate']):6.2%}"
-                )
+        base_scenario = copy.deepcopy(config)
+        base_scenario.setdefault("generator", {})["dataset_scale"] = DATASET_SCALE_NAMES[scale]
+        base_scenario.setdefault("generator", {})["num_workflows"] = num_workflows
+        for deadline_type in deadline_types:
+            # Only simulation.deadline_type differs between regimes, so a given
+            # seed yields the same arrivals and task graphs in all of them.
+            scenario = apply_deadline_type(base_scenario, deadline_type)
+            print(
+                f"[scale] {scale} deadline={deadline_type} workflows={num_workflows} "
+                f"seeds={args.seed_start}-{args.seed_start + args.num_seeds - 1}"
+            )
+            for offset in range(int(args.num_seeds)):
+                eval_seed = int(args.seed_start + offset)
+                for mode in modes:
+                    if (scale, deadline_type, mode, eval_seed) in completed:
+                        continue
+                    with redirect_stdout(io.StringIO()):
+                        if mode == "oo_actor_critic":
+                            metrics = run_oo(
+                                scenario,
+                                resources,
+                                oo_encoder,
+                                oo_agent,
+                                oo_objective,
+                                oo_deadline_weight,
+                                eval_seed,
+                            )
+                        elif mode == "dream_dqn":
+                            metrics = run_dream(
+                                scenario, resources, dream_scheduler, eval_seed
+                            )
+                        elif mode == "hirl_td3_ddqn":
+                            metrics = run_hirl(
+                                scenario, resources, hirl_scheduler, eval_seed
+                            )
+                        elif mode == "dqn_edge":
+                            metrics = run_dqn_edge(
+                                scenario, resources, dqn_edge_runtime, eval_seed
+                            )
+                        else:
+                            metrics = run_d3qn_family(
+                                scenario,
+                                resources,
+                                d3qn_agent,
+                                d3qn_objective,
+                                eval_seed,
+                                MODE_TO_HIGH_ALGORITHM[mode],
+                            )
+                    metrics = add_normalized_metrics(metrics, num_workflows)
+                    row = {
+                        "scale": scale,
+                        "deadline_type": deadline_type,
+                        "mode": mode,
+                        "eval_seed": eval_seed,
+                        "num_workflows": num_workflows,
+                        **metrics,
+                    }
+                    rows.append(row)
+                    write_rows(output_dir, rows)
+                    print(
+                        f"[eval] scale={scale:<6} deadline={deadline_type:<6} "
+                        f"seed={eval_seed} mode={mode:<16} "
+                        f"energy_kJ={float(metrics['total_energy']) / 1000.0:8.2f} "
+                        f"deadline={float(metrics['deadline_success_rate']):6.2%} "
+                        f"reliability={float(metrics['reliability_success_rate']):6.2%}"
+                    )
 
     summaries = summarize_rows(rows)
     paired_deltas = paired_energy_deltas(rows)

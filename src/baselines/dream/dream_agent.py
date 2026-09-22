@@ -130,6 +130,12 @@ class DReaMAgent:
                 f"> limit={self.config.max_abs_parameter:.6g}."
             )
         self.gradient_steps += 1
+        target_updated = (
+            self.gradient_steps % self.config.target_update_frequency == 0
+        )
+        if target_updated:
+            self.target_net.load_state_dict(self.online_net.state_dict())
+            self.target_net.eval()
         td_abs = (target - selected).detach().abs()
         return {
             "loss": float(loss.detach().cpu()),
@@ -143,15 +149,13 @@ class DReaMAgent:
             "grad_norm_after_clip": min(grad_norm_value, self.config.max_grad_norm),
             "parameter_abs_max": parameter_abs_max,
             "gradient_steps": self.gradient_steps,
+            "target_updated": target_updated,
         }
 
     def after_environment_step(self):
         self.environment_steps += 1
         self.epsilon = max(self.config.epsilon_min, self.epsilon * self.config.epsilon_decay)
-        updated = self.environment_steps % self.config.target_update_frequency == 0
-        if updated:
-            self.target_net.load_state_dict(self.online_net.state_dict()); self.target_net.eval()
-        return updated
+        return False
 
     def checkpoint(self, episode, best_episode_reward):
         return {"online_network": self.online_net.state_dict(), "target_network": self.target_net.state_dict(),

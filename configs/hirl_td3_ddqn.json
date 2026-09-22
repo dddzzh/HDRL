@@ -6,7 +6,7 @@
     "arrival_rate": 0.1
   },
   "resources": {
-    "path": "configs/resources_edge_cloud_default.json",
+    "path": "configs/resources_edge_cloud_dvfs_v3.json",
     "num_edge": 20,
     "num_cloud": 6
   },

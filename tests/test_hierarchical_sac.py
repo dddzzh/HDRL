@@ -121,10 +121,10 @@ class TestHierarchicalSAC(unittest.TestCase):
         )
         critic_state = agent.build_critic_state(observation, actor_state)
 
-        self.assertEqual(agent.actor_state_dim, 12)
+        self.assertEqual(agent.actor_state_dim, 14)
         self.assertEqual(
             agent.critic_state_dim,
-            12 + 5 + 2 * SERVER_FEATURE_DIM,
+            14 + 5 + 2 * SERVER_FEATURE_DIM,
         )
         np.testing.assert_allclose(
             actor_state[-3:], server_features[1, [0, 9, 10]]

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from .dream_action import decode_action
+from dataclasses import replace
+
+from src.simulator.resource import map_discrete_rho_to_server_range
+
+from .dream_action import DREAM_RHO_LEVELS, decode_action
 
 
 class DReaMScheduler:
@@ -19,6 +23,15 @@ class DReaMScheduler:
         vector = self.state_builder.build_state(env, task, workflow, context)
         action_id = self.agent.select_action(vector, training=training)
         decision = decode_action(action_id, len(env.servers), self.enable_fault_tolerance)
+        server = next(
+            row for row in env.servers if int(row["id"]) == decision.server_id
+        )
+        decision = replace(
+            decision,
+            rho=map_discrete_rho_to_server_range(
+                server, DREAM_RHO_LEVELS, decision.dvfs_index
+            ),
+        )
         if decision.ft_index is not None:
             raise RuntimeError("Adapted DReaM fault-tolerance execution is intentionally not connected.")
         action = {"workflow_id": task["workflow_id"], "task_id": task["task_id"],

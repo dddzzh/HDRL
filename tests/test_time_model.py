@@ -95,6 +95,38 @@ def mark_parent_finished(state, task_id, finish_time, server_id):
 
 
 class TimeModelTests(unittest.TestCase):
+    def test_future_safety_reserves_the_remaining_critical_path(self):
+        workflow = Workflow(
+            workflow_id="wf",
+            arrival_time=0.0,
+            relative_deadline=100.0,
+            absolute_deadline=100.0,
+            tasks=(
+                Task(0, workload_cycles=10.0),
+                Task(1, workload_cycles=10.0),
+            ),
+            edges=(DependencyEdge(0, 1, 0.0),),
+        )
+        legacy, _ = make_env(
+            workflow, {"low_deadline_safety_margin_ratio": 0.0}
+        )
+        future, _ = make_env(
+            workflow,
+            {
+                "low_deadline_safety_margin_ratio": 0.0,
+                "future_critical_path_safety": True,
+            },
+        )
+
+        old = legacy.compute_low_safety_metrics("wf", 0, 0)
+        new = future.compute_low_safety_metrics("wf", 0, 0)
+
+        self.assertAlmostEqual(old["remaining_critical_path_time"], 0.0)
+        self.assertAlmostEqual(new["remaining_critical_path_time"], 10.0)
+        self.assertAlmostEqual(old["safe_execution_budget"], 100.0)
+        self.assertAlmostEqual(new["safe_execution_budget"], 90.0)
+        self.assertAlmostEqual(new["predicted_workflow_finish_rho_1"], 20.0)
+
     def test_ready_queue_can_use_upward_rank_instead_of_smallest_workload(self):
         workflow = Workflow(
             workflow_id="wf",

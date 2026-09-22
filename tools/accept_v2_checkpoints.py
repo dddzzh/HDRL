@@ -40,11 +40,15 @@ import torch
 from src.D3QN.reward import HierarchicalObjective
 from src.ppo.hierarchical_rollout import HighRolloutBuffer, LowRolloutBuffer
 from tools.hierarchical_common import (
+    DEADLINE_TYPES,
+    apply_deadline_type,
     build_env,
     build_resources,
     build_workflows,
+    config_deadline_type,
     configure_agent_state,
     metric_rank,
+    satisfaction_statistics,
 )
 from tools.train_hierarchical_d3qn import collect_d3qn_episode
 from tools.train_coupled_hierarchical_d3qn_sac import select_agent_class
@@ -81,6 +85,27 @@ def parse_args():
         type=int,
         default=1,
         help="Evaluate every Nth saved checkpoint during selection.",
+    )
+    parser.add_argument(
+        "--deadline-type",
+        choices=DEADLINE_TYPES,
+        default=None,
+        help=(
+            "Deadline regime of the acceptance block (tight=P(2x)=0.8, "
+            "medium=0.5, loose=0.2). Defaults to the config value. The three "
+            "regimes share identical instances for a given seed, so this is a "
+            "paired generalization test of one unified model."
+        ),
+    )
+    parser.add_argument(
+        "--select-deadline-type",
+        choices=DEADLINE_TYPES,
+        default=None,
+        help=(
+            "Deadline regime of the selection block. Defaults to the config "
+            "value -- deliberately NOT to --deadline-type, so the checkpoint "
+            "stays selected on the training regime when accepting on another."
+        ),
     )
     parser.add_argument("--label", default=None)
     parser.add_argument(
@@ -155,6 +180,16 @@ def main():
     with redirect_stdout(StringIO()):
         resources = build_resources(config, int(config.get("training", {}).get("seed", 42)))
     objective = HierarchicalObjective(config.get("objective", {}))
+    # The checkpoint is picked on the training regime and accepted on whichever
+    # regime is under test, so one model is reported across tight/medium/loose.
+    select_config = apply_deadline_type(config, args.select_deadline_type)
+    accept_config = apply_deadline_type(config, args.deadline_type)
+    args.resolved_select_deadline_type = config_deadline_type(select_config)
+    print(
+        f"[regime] select={args.resolved_select_deadline_type} "
+        f"accept={config_deadline_type(accept_config)}",
+        flush=True,
+    )
 
     selection = []
     if args.checkpoint is not None:
@@ -191,7 +226,7 @@ def main():
         )
         best_rank = (1.0 if picked_episode is not None else 0.0,)
         best_point = {}
-        return _accept(args, run_dir, config, resources, objective, agent_class,
+        return _accept(args, run_dir, accept_config, resources, objective, agent_class,
                        best_path, best_rank, selection)
 
     checkpoints = sorted(
@@ -207,8 +242,9 @@ def main():
     best = None
     for path in checkpoints:
         with redirect_stdout(StringIO()):
-            agent = load_agent(path, config, resources, agent_class, True, args.select_seed_start)
-            rows = evaluate(agent, config, resources, objective,
+            agent = load_agent(path, select_config, resources, agent_class, True,
+                               args.select_seed_start)
+            rows = evaluate(agent, select_config, resources, objective,
                             args.select_seed_start, args.num_seeds, True)
         summary = aggregate(rows)
         point = {name: summary[name]["mean"] for name in REPORT}
@@ -225,7 +261,7 @@ def main():
 
     best_rank, best_path, best_point = best
     print(f"[select] winner={best_path.name} feasible={best_rank[0] >= 1.0}", flush=True)
-    return _accept(args, run_dir, config, resources, objective, agent_class,
+    return _accept(args, run_dir, accept_config, resources, objective, agent_class,
                    best_path, best_rank, selection)
 
 
@@ -238,13 +274,29 @@ def _accept(args, run_dir, config, resources, objective, agent_class,
                                args.accept_seed_start)
             rows = evaluate(agent, config, resources, objective,
                             args.accept_seed_start, args.num_seeds, use_low)
-        accept[mode] = {"rows": rows, "summary": aggregate(rows)}
+        deadline_satisfaction = satisfaction_statistics(
+            row["deadline_success_rate"] for row in rows
+        )
+        accept[mode] = {
+            "rows": rows,
+            "summary": aggregate(rows),
+            "deadline_satisfaction": deadline_satisfaction,
+            "reliability_satisfaction": satisfaction_statistics(
+                row["reliability_success_rate"] for row in rows
+            ),
+        }
         s = accept[mode]["summary"]
         print(f"[accept:{mode}] deadline={s['deadline_success_rate']['mean']:.4f} "
               f"rel={s['reliability_success_rate']['mean']:.4f} "
               f"E={s['total_energy']['mean'] / 1000:.2f}kJ "
               f"resp={s['average_workflow_response_time']['mean']:.2f} "
               f"rho={s['rho_mean']['mean']:.4f}", flush=True)
+        esp = deadline_satisfaction["esp"]
+        print(f"[esp:{mode}]    "
+              + " ".join(f"ESP@{name}={value:.2f}" for name, value in sorted(esp.items()))
+              + f" CVaR{deadline_satisfaction['cvar_tail_fraction']:.0%}="
+              f"{deadline_satisfaction['cvar']:.4f} "
+              f"min={deadline_satisfaction['min']:.4f}", flush=True)
 
     paired = [
         float(a["total_energy"]) - float(b["total_energy"])
@@ -267,6 +319,8 @@ def _accept(args, run_dir, config, resources, objective, agent_class,
                                   args.accept_seed_start + args.num_seeds - 1],
         "deadline_target": args.deadline_target,
         "reliability_target": args.reliability_target,
+        "acceptance_deadline_type": config_deadline_type(config),
+        "selection_deadline_type": args.resolved_select_deadline_type,
         "selected_checkpoint": best_path.name,
         "selection_feasible": bool(best_rank[0] >= 1.0),
         "selection_table": selection,

@@ -10,7 +10,7 @@ from src.simulator.resource import compute_execution_time
 
 TASK_FEATURE_DIM = 4
 SERVER_FEATURE_DIM = 12
-GLOBAL_FEATURE_DIM = 5
+GLOBAL_FEATURE_DIM = 8
 LOW_STATE_FEATURE_DIM = 9
 EPS = 1e-8
 
@@ -97,7 +97,14 @@ class HierarchicalStateEncoder:
             self._debug_high_state_printed = True
             self.print_high_server_debug(ready_tasks, servers, current_time, max_server_freq_hz, metrics_by_id)
 
-        global_features = self.high_global_features(ready_tasks, servers, current_time)
+        global_features = self.high_global_features(
+            ready_tasks,
+            servers,
+            current_time,
+            context.get("global_urgency_metrics", {})
+            if isinstance(context, Mapping)
+            else {},
+        )
         current_task_features = task_features[0] if ready_tasks else np.zeros(TASK_FEATURE_DIM, dtype=np.float32)
         state_vector = np.concatenate(
             [
@@ -394,7 +401,9 @@ class HierarchicalStateEncoder:
                 f"slack={metrics['slack_after_assign']:.4f}s"
             )
 
-    def high_global_features(self, ready_tasks, servers, current_time):
+    def high_global_features(
+        self, ready_tasks, servers, current_time, global_urgency_metrics=None
+    ):
         ready_ratio = len(ready_tasks) / max(self.max_ready_tasks, 1)
         server_ratio = len(servers) / max(self.max_servers, 1)
         if ready_tasks:
@@ -423,8 +432,28 @@ class HierarchicalStateEncoder:
                 for server in servers
                 if safe_float(server.get("execution_available_time", server.get("available_time", 0.0))) > current_time
             ) / len(servers)
+        global_urgency_metrics = global_urgency_metrics or {}
+        global_critical_pressure = np.clip(
+            safe_float(global_urgency_metrics.get("global_critical_pressure", 0.0)),
+            0.0,
+            1.0,
+        )
+        worst_critical_pressure = np.clip(
+            safe_float(global_urgency_metrics.get("worst_critical_pressure", 0.0)),
+            0.0,
+            1.0,
+        )
         return np.array(
-            [ready_ratio, server_ratio, mean_slack, min_slack, busy_ratio + mean_wait_ratio],
+            [
+                ready_ratio,
+                server_ratio,
+                mean_slack,
+                min_slack,
+                busy_ratio,
+                mean_wait_ratio,
+                global_critical_pressure,
+                worst_critical_pressure,
+            ],
             dtype=np.float32,
         )
 

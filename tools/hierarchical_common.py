@@ -13,8 +13,127 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.datasets.workflow_factory import create_workflows
+from src.simulator.deadline import DEADLINE_PROBABILITIES, validate_deadline_type
 from src.simulator.edge_cloud_env import EdgeCloudWorkflowEnv
 from src.simulator.resource import load_resources
+
+
+DEADLINE_TYPES = tuple(sorted(DEADLINE_PROBABILITIES, key=DEADLINE_PROBABILITIES.get, reverse=True))
+
+
+def apply_deadline_type(config, deadline_type):
+    """Return ``config`` re-targeted at a different Deadline regime.
+
+    Only ``simulation.deadline_type`` changes, and that value is consumed by a
+    single ``rng.random()`` draw per workflow in ``cai_2025_deadline_fields``.
+    For a fixed seed the arrival times, task graphs and HEFT reference
+    makespans are therefore identical across tight/medium/loose: the three
+    regimes are a paired comparison over one set of instances, not three
+    independent samples.
+    """
+    if deadline_type is None:
+        return config
+    result = copy.deepcopy(config)
+    result.setdefault("simulation", {})["deadline_type"] = validate_deadline_type(
+        deadline_type
+    )
+    return result
+
+
+def config_deadline_type(config):
+    return validate_deadline_type(
+        config.get("simulation", {}).get("deadline_type", "medium")
+    )
+
+
+def satisfaction_statistics(
+    success_rates,
+    thresholds=(0.90, 0.92, 0.95, 1.0),
+    tail_fraction=0.25,
+):
+    """Summarize per-run Deadline success rates as ESP and CVaR.
+
+    ``esp[gamma]`` is the fraction of runs whose own success rate reaches
+    ``gamma`` -- the empirical satisfaction probability.  With M runs it only
+    resolves to 1/M and discards the magnitude of a miss, so it is a reporting
+    statistic.  ``cvar`` is the mean of the worst ``tail_fraction`` of runs: it
+    is continuous, tail-sensitive, and is what checkpoint selection should rank
+    on when the goal is to raise ESP.
+    """
+    values = np.asarray([float(value) for value in success_rates], dtype=np.float64)
+    if values.size == 0:
+        return {}
+    ordered = np.sort(values)
+    tail = max(1, int(math.ceil(float(tail_fraction) * values.size)))
+    return {
+        "n": int(values.size),
+        "mean": float(values.mean()),
+        "std": float(values.std(ddof=1)) if values.size > 1 else 0.0,
+        "min": float(ordered[0]),
+        "esp": {f"{value:.2f}": float(np.mean(values >= value - 1e-9))
+                for value in thresholds},
+        "cvar_tail_fraction": float(tail) / float(values.size),
+        "cvar": float(ordered[:tail].mean()),
+    }
+
+
+# Which per-run rates each evaluation block reports as ESP, and at which
+# thresholds.  Deadline carries the full ladder because the acceptance rule
+# (Gamma_D = 0.92) sits inside it; reliability is only ever reported at 100%,
+# which is the checkpoint target, so a ladder there would be dead columns.
+SATISFACTION_METRICS = (
+    ("deadline_success_rate", "deadline", (0.90, 0.92, 0.95, 1.0)),
+    ("reliability_success_rate", "reliability", (1.0,)),
+)
+
+
+def satisfaction_field_names(metrics=SATISFACTION_METRICS):
+    """Flat column names produced by :func:`attach_satisfaction_metrics`.
+
+    CSV writers in the baseline trainers use ``extrasaction="ignore"``, so the
+    header list has to be extended with exactly these names or the columns are
+    silently dropped.
+    """
+    names = []
+    for _, prefix, thresholds in metrics:
+        names.extend(f"{prefix}_esp_{value:.2f}".replace(".", "p")
+                     for value in thresholds)
+        names.extend((f"{prefix}_cvar25", f"{prefix}_min", f"{prefix}_std"))
+    return tuple(names)
+
+
+def satisfaction_sample_key(metric_key):
+    return f"{metric_key}_samples"
+
+
+def attach_satisfaction_metrics(metrics, rows, satisfaction_metrics=SATISFACTION_METRICS):
+    """Add flat ESP/CVaR columns to an averaged evaluation metrics dict.
+
+    ``metrics`` is the mean over the evaluation block and hides the shape of the
+    per-run distribution: a block that misses the Deadline on a few congested
+    instances and one that misses a little everywhere have the same mean but
+    very different ESP.  ``rows`` are the per-run metric dicts the mean was
+    taken over, so the spread is recovered here rather than re-derived later.
+
+    The per-run values themselves are kept under ``<metric>_samples`` so two
+    validation blocks can be pooled exactly (see
+    :func:`combine_checkpoint_metrics`) instead of having their block-level
+    summaries combined, which no ESP or CVaR can be recovered from.  The CSV
+    writers drop these list columns; the JSON/JSONL histories keep them.
+    Mutates and returns ``metrics``.
+    """
+    rows = list(rows)
+    for key, prefix, thresholds in satisfaction_metrics:
+        values = [float(row[key]) for row in rows if row.get(key) is not None]
+        metrics[satisfaction_sample_key(key)] = values
+        stats = satisfaction_statistics(values, thresholds=thresholds)
+        for value in thresholds:
+            name = f"{prefix}_esp_{value:.2f}".replace(".", "p")
+            metrics[name] = stats.get("esp", {}).get(f"{value:.2f}")
+        metrics[f"{prefix}_cvar25"] = stats.get("cvar")
+        metrics[f"{prefix}_min"] = stats.get("min")
+        metrics[f"{prefix}_std"] = stats.get("std")
+    return metrics
 
 
 def load_json(path):
@@ -218,6 +337,7 @@ def build_episode_metrics_from_buffers(high_buffer, low_buffer, summary, event_l
     )
     has_sub_deadline_metrics = any(
         info.get("high_reward_profile") == "sub_deadline_lagrangian_v1"
+        or float(info.get("deadline_sub_weight", 0.0)) > 0.0
         for info in high_buffer.infos
     )
     high_rewards = np.asarray(high_buffer.rewards, dtype=np.float64)
@@ -307,6 +427,22 @@ def build_episode_metrics_from_buffers(high_buffer, low_buffer, summary, event_l
         _info_values(
             high_buffer.infos, "terminal_high_deadline_constraint_cost"
         ),
+        dtype=np.float64,
+    )
+    # beta_q diagnostics.  ``high_queue_constraint_cost`` is the part of the
+    # Deadline-head cost above that comes from server contention rather than
+    # from Delta-C_t, so its share says how much of the head's signal the
+    # queue term now carries.  Both are zero when beta_q = 0.
+    high_queue_delay_seconds = np.asarray(
+        _info_values(high_buffer.infos, "high_queue_delay_seconds"),
+        dtype=np.float64,
+    )
+    high_queue_delay_normalized = np.asarray(
+        _info_values(high_buffer.infos, "high_queue_delay_normalized"),
+        dtype=np.float64,
+    )
+    high_queue_constraint_costs = np.asarray(
+        _info_values(high_buffer.infos, "high_queue_constraint_cost"),
         dtype=np.float64,
     )
     high_deadline_lambdas = np.asarray(
@@ -590,6 +726,31 @@ def build_episode_metrics_from_buffers(high_buffer, low_buffer, summary, event_l
                 "total_high_deadline_constraint_cost": _array_sum(
                     high_deadline_constraint_costs
                 ),
+                "mean_high_queue_delay_seconds": _array_mean(
+                    high_queue_delay_seconds
+                ),
+                "total_high_queue_delay_seconds": _array_sum(
+                    high_queue_delay_seconds
+                ),
+                "mean_high_queue_delay_normalized": _array_mean(
+                    high_queue_delay_normalized
+                ),
+                "mean_high_queue_constraint_cost": _array_mean(
+                    high_queue_constraint_costs
+                ),
+                "total_high_queue_constraint_cost": _array_sum(
+                    high_queue_constraint_costs
+                ),
+                # Share of the Deadline-head cost carried by the queue term.
+                "high_queue_term_share": (
+                    float(
+                        _array_sum(high_queue_constraint_costs)
+                        / _array_sum(high_deadline_constraint_costs)
+                    )
+                    if abs(float(_array_sum(high_deadline_constraint_costs)))
+                    > 1e-12
+                    else 0.0
+                ),
                 "mean_high_lagrangian_penalty": _array_mean(
                     high_lagrangian_penalties
                 ),
@@ -803,16 +964,45 @@ def _recompute_weighted_mean(metrics, name, count_key):
         metrics[mean_key] = float(total) / float(count)
 
 
-def metric_rank(metrics, deadline_target=None, reliability_target=None):
+def metric_rank(
+    metrics,
+    deadline_target=None,
+    reliability_target=None,
+    deadline_esp_threshold=None,
+    deadline_esp_target=None,
+):
     deadline = metrics.get("deadline_success_rate")
     reliability = metrics.get("reliability_success_rate")
     energy = metrics.get("total_energy")
-    response = metrics.get("average_workflow_response_time", metrics.get("average_response_time"))
+    response = metrics.get(
+        "average_workflow_response_time",
+        metrics.get("avg_workflow_response_time", metrics.get("average_response_time")),
+    )
     deadline_value = -1.0 if deadline is None else float(deadline)
     reliability_value = -1.0 if reliability is None else float(reliability)
     energy_value = float("inf") if energy is None else float(energy)
     response_value = float("inf") if response is None else float(response)
-    if deadline_target is not None or reliability_target is not None:
+    esp_enabled = deadline_esp_threshold is not None or deadline_esp_target is not None
+    if esp_enabled and (
+        deadline_esp_threshold is None or deadline_esp_target is None
+    ):
+        raise ValueError(
+            "deadline_esp_threshold and deadline_esp_target must be set together."
+        )
+    esp_value = None
+    if esp_enabled:
+        esp_threshold = float(deadline_esp_threshold)
+        esp_required = float(deadline_esp_target)
+        if not 0.0 <= esp_threshold <= 1.0:
+            raise ValueError("deadline_esp_threshold must be in [0, 1].")
+        if not 0.0 <= esp_required <= 1.0:
+            raise ValueError("deadline_esp_target must be in [0, 1].")
+        esp_name = f"deadline_esp_{esp_threshold:.2f}".replace(".", "p")
+        esp_value = metrics.get(f"{esp_name}_min_block", metrics.get(esp_name))
+        if esp_value is None:
+            raise KeyError(f"Missing checkpoint ESP metric: {esp_name}")
+        esp_value = float(esp_value)
+    if deadline_target is not None or reliability_target is not None or esp_enabled:
         target = None if deadline_target is None else float(deadline_target)
         reliability_required = (
             None if reliability_target is None else float(reliability_target)
@@ -829,7 +1019,28 @@ def metric_rank(metrics, deadline_target=None, reliability_target=None):
             reliability_required is None
             or reliability_value >= reliability_required
         )
-        feasible = deadline_feasible and reliability_feasible
+        esp_feasible = not esp_enabled or esp_value >= esp_required
+        feasible = deadline_feasible and reliability_feasible and esp_feasible
+        if esp_enabled:
+            if feasible:
+                # ESP is the only Deadline gate in this mode.  The per-block
+                # mean remains available as a diagnostic, but it neither gates
+                # nor ranks checkpoints.
+                return (
+                    1.0,
+                    -energy_value,
+                    reliability_value,
+                    esp_value,
+                    -response_value,
+                )
+            return (
+                0.0,
+                float(reliability_feasible) + float(esp_feasible),
+                esp_value,
+                reliability_value,
+                -energy_value,
+                -response_value,
+            )
         if feasible:
             # Once the deadline requirement is met, scheduling is a constrained
             # energy-minimization problem.  Deadline is only a tie-breaker.
@@ -837,13 +1048,17 @@ def metric_rank(metrics, deadline_target=None, reliability_target=None):
                 1.0,
                 -energy_value,
                 reliability_value,
+                1.0 if esp_value is None else esp_value,
                 deadline_value,
                 -response_value,
             )
         # Before feasibility is reached, recover the deadline constraint first.
         return (
             0.0,
-            float(deadline_feasible) + float(reliability_feasible),
+            float(deadline_feasible)
+            + float(reliability_feasible)
+            + float(esp_feasible),
+            -1.0 if esp_value is None else esp_value,
             deadline_value,
             reliability_value,
             -energy_value,
@@ -854,6 +1069,116 @@ def metric_rank(metrics, deadline_target=None, reliability_target=None):
         reliability_value,
         -energy_value,
         -response_value,
+    )
+
+
+def checkpoint_validation_seeds(training_cfg, default_seed):
+    seeds = [int(training_cfg.get("eval_seed", default_seed))]
+    secondary = training_cfg.get("eval_seed_secondary")
+    if secondary is not None and int(secondary) not in seeds:
+        seeds.append(int(secondary))
+    return seeds
+
+
+def combine_checkpoint_metrics(blocks):
+    """Merge the validation blocks a checkpoint is ranked on into one metrics dict.
+
+    Where the per-run samples survive (``attach_satisfaction_metrics``), the
+    blocks are **pooled** and every constraint statistic is recomputed over the
+    union.  Two disjoint 20-seed blocks then give a 40-seed estimate: the
+    standard error drops by sqrt(2) and ESP resolves to 1/40 instead of 1/20.
+    Combining the block *summaries* instead cannot do this -- ``min`` of two
+    20-seed means is biased low by roughly ``sigma/sqrt(20) * 0.56`` and no
+    combination of two ESP values recovers the pooled ESP.
+
+    Protection against selecting on noise does not come from this function: the
+    accepted numbers are reported on a third block that selection never touches.
+
+    Energy and response time are averaged, never min-ed: once the constraint
+    gate is passed the ranking is a straight energy minimization
+    (see :func:`metric_rank`), so a pessimistic energy estimate would distort
+    the objective rather than guard the constraint.
+    """
+    if not blocks:
+        raise ValueError("At least one validation block is required.")
+    result = dict(blocks[0])
+    pooled = {}
+    for metric_key, _, _ in SATISFACTION_METRICS:
+        samples = []
+        complete = True
+        for row in blocks:
+            values = row.get(satisfaction_sample_key(metric_key))
+            if values is None:
+                complete = False
+                break
+            samples.extend(float(value) for value in values)
+        if complete and samples:
+            pooled[metric_key] = samples
+
+    for metric_key in ("deadline_success_rate", "reliability_success_rate"):
+        if metric_key in pooled:
+            result[metric_key] = float(np.mean(pooled[metric_key]))
+        else:
+            # Pre-pooling blocks: fall back to the conservative worst block.
+            result[metric_key] = min(float(row[metric_key]) for row in blocks)
+
+    for name in (
+        "total_energy",
+        "average_workflow_response_time",
+        "avg_workflow_response_time",
+        "average_response_time",
+        "episode_reward",
+    ):
+        values = [float(row[name]) for row in blocks if row.get(name) is not None]
+        if values:
+            result[name] = float(np.mean(values))
+
+    if pooled:
+        for metric_key, prefix, thresholds in SATISFACTION_METRICS:
+            if metric_key not in pooled:
+                continue
+            result[satisfaction_sample_key(metric_key)] = pooled[metric_key]
+            stats = satisfaction_statistics(pooled[metric_key], thresholds=thresholds)
+            for value in thresholds:
+                name = f"{prefix}_esp_{value:.2f}".replace(".", "p")
+                result[name] = stats["esp"][f"{value:.2f}"]
+            result[f"{prefix}_cvar25"] = stats["cvar"]
+            result[f"{prefix}_min"] = stats["min"]
+            result[f"{prefix}_std"] = stats["std"]
+    else:
+        # ``result`` started as a copy of the first block, so every satisfaction
+        # column would otherwise report block 0 alone under a combined label.
+        for name in satisfaction_field_names():
+            values = [float(row[name]) for row in blocks if row.get(name) is not None]
+            if values:
+                result[name] = float(
+                    max(values) if name.endswith("_std") else min(values)
+                )
+    # Checkpoint feasibility is deliberately block-wise: a good first block
+    # must not hide a weak second block in the pooled ESP.
+    for name in satisfaction_field_names():
+        if "_esp_" not in name:
+            continue
+        values = [float(row[name]) for row in blocks if row.get(name) is not None]
+        if values:
+            result[f"{name}_min_block"] = min(values)
+    result["validation_block_count"] = len(blocks)
+    return result
+
+
+def write_checkpoint_selection(path, policy, best_metrics, best_rank, checkpoint_name):
+    rank = None if best_rank is None else [float(value) for value in best_rank]
+    feasible = bool(rank is not None and rank[0] >= 1.0)
+    payload = {
+        "policy": policy,
+        "feasible": feasible,
+        "selected_checkpoint": checkpoint_name if feasible else None,
+        "best_observed_checkpoint": checkpoint_name if rank is not None else None,
+        "rank": rank,
+        "metrics": best_metrics,
+    }
+    Path(path).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -908,7 +1233,43 @@ def format_metrics(metrics):
     return " ".join(parts)
 
 
-def print_metrics_block(label, row):
+def format_satisfaction_summary(row, *, include_mean=True):
+    """One-line ESP/CVaR digest of an evaluation row, for console logs.
+
+    The block mean alone cannot tell a run that misses the Deadline on a few
+    congested instances from one that misses a little everywhere, which is the
+    difference ESP is there to expose.
+    """
+    parts = []
+    fields = [
+        ("deadline_esp_0p90", "ESP@0.90"),
+        ("deadline_esp_0p92", "ESP@0.92"),
+        ("deadline_esp_0p95", "ESP@0.95"),
+        ("deadline_cvar25", "CVaR25"),
+        ("deadline_min", "min"),
+        ("reliability_esp_1p00", "R_ESP@1.00"),
+    ]
+    if include_mean:
+        fields.insert(0, ("deadline_success_rate", "SR"))
+    else:
+        fields = [
+            ("deadline_esp_0p90", "ESP@0.90"),
+            ("reliability_esp_1p00", "R_ESP@1.00"),
+        ]
+    for key, title in fields:
+        value = row.get(key)
+        if value is not None:
+            parts.append(f"{title}={float(value):.4f}")
+    return " ".join(parts)
+
+
+def print_metrics_block(
+    label,
+    row,
+    *,
+    include_deadline_success_rate=True,
+    satisfaction_target_only=False,
+):
     replay_zscore_high_reward = row.get("high_reward_mode") == "replay_zscore"
     header = [
         ("episode", "ep"),
@@ -1005,6 +1366,19 @@ def print_metrics_block(label, row):
             ("total_high_reliability_penalty", "rel_pen_total"),
             ("reliability_crossing_count", "rel_cross"),
         ]),
+        # Only evaluation rows carry these keys, so this section is absent from
+        # per-episode training output and appears once per eval block.
+        ("satisfaction", [
+            ("deadline_esp_0p90", "ESP@0.90"),
+            ("deadline_esp_0p92", "ESP@0.92"),
+            ("deadline_esp_0p95", "ESP@0.95"),
+            ("deadline_esp_1p00", "ESP@1.00"),
+            ("deadline_cvar25", "D_CVaR25"),
+            ("deadline_min", "D_min"),
+            ("deadline_std", "D_std"),
+            ("reliability_esp_1p00", "R_ESP@1.00"),
+            ("reliability_min", "R_min"),
+        ]),
         ("p3o_deadline", [
             ("high_deadline_raw_surrogate", "raw"),
             ("high_deadline_margin", "margin"),
@@ -1032,6 +1406,7 @@ def print_metrics_block(label, row):
             ("rho_safe_mean", "safe_mean"),
             ("rho_safe_at_one_rate", "safe_at_one"),
             ("forced_max_frequency_rate", "forced_max"),
+            ("rho_floor_binding_rate", "floor_bind"),
         ]),
         ("low_deadline", [
             ("low_deadline_surrogate", "surrogate"),
@@ -1059,7 +1434,17 @@ def print_metrics_block(label, row):
         ]),
     ]
     for name, pairs in sections:
-        values = [_format_pair(row, key, title) for key, title in pairs if key in row]
+        values = [
+            _format_pair(row, key, title)
+            for key, title in pairs
+            if key in row
+            and (include_deadline_success_rate or key != "deadline_success_rate")
+            and (
+                not satisfaction_target_only
+                or name != "satisfaction"
+                or key in {"deadline_esp_0p90", "reliability_esp_1p00"}
+            )
+        ]
         if values:
             print(f"  {name:<13} " + "  ".join(values))
 

@@ -55,6 +55,15 @@ LAGRANGIAN_HYPERPARAMETERS = (
     ("lambda_max", "lambda_max", float),
     ("warmup_episodes", "warmup_episodes", int),
     ("window_workflows", "window_workflows", int),
+    # What the dual regulates, and the threshold it regulates it against.
+    # Silently inheriting these from a checkpoint would let a run optimise one
+    # constraint while its config claims another -- the same class of bug the
+    # rest of this tuple guards, but harder to notice because the multiplier
+    # still moves.
+    ("proportional_gain", "proportional_gain", float),
+    ("window_episodes", "window_episodes", int),
+    ("constraint_metric", "constraint_metric", str),
+    ("episode_deadline_target", "episode_deadline_target", float),
 )
 
 # The reliability controllers use a different key prefix but suffer from the
@@ -290,18 +299,21 @@ def reliability_violation_indicators(result):
 
 
 def install_low_dual_attribution(mode):
-    """Wrap ``collect_d3qn_episode`` to change only the low duals' cost signals."""
+    """Wrap collection with the configured low-level responsibility signal."""
     original = production.collect_d3qn_episode
 
     def wrapped(*args, **kwargs):
+        if mode == "workflow_counterfactual":
+            kwargs["low_dual_attribution"] = mode
         result = original(*args, **kwargs)
-        result["low_deadline_dual_costs"] = dvfs_delay_share_misses(result)
+        if mode == "dvfs_delay_share":
+            result["low_deadline_dual_costs"] = dvfs_delay_share_misses(result)
         indicators = reliability_violation_indicators(result)
         if len(indicators) == len(result["low_reliability_dual_costs"]):
             result["low_reliability_dual_costs"] = indicators
         return result
 
-    if mode == "dvfs_delay_share":
+    if mode in {"dvfs_delay_share", "workflow_counterfactual"}:
         production.collect_d3qn_episode = wrapped
         return original
     return None
@@ -330,10 +342,15 @@ def run_training(config, **kwargs):
     attribution = str(
         dict(config.get("agent", {})).get("low_dual_attribution", "counterfactual")
     ).strip().lower()
-    if attribution not in {"counterfactual", "dvfs_delay_share"}:
+    if attribution not in {
+        "counterfactual",
+        "dvfs_delay_share",
+        "workflow_counterfactual",
+    }:
         raise ValueError(
-            "agent.low_dual_attribution must be 'counterfactual' or "
-            f"'dvfs_delay_share'; got {attribution!r}."
+            "agent.low_dual_attribution must be 'counterfactual', "
+            "'dvfs_delay_share', or 'workflow_counterfactual'; "
+            f"got {attribution!r}."
         )
     original_agent = production.HierarchicalD3QNAgent
     original_collect = install_low_dual_attribution(attribution)
@@ -350,7 +367,14 @@ def main():
     parser_args = production.parse_args()
     config = production.load_json(parser_args.config)
     agent_class = select_agent_class(config)
-    print(f"[coupled] agent_class={agent_class.__name__}", flush=True)
+    attribution = dict(config.get("agent", {})).get(
+        "low_dual_attribution", "counterfactual"
+    )
+    print(
+        f"[coupled] agent_class={agent_class.__name__} "
+        f"low_dual_attribution={attribution}",
+        flush=True,
+    )
     result = run_training(
         copy.deepcopy(config),
         smoke_test=parser_args.smoke_test,

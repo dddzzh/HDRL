@@ -57,6 +57,58 @@ class HierarchicalObjective:
         )
         if self.fixed_deadline_lambda < 0.0:
             raise ValueError("fixed_deadline_lambda must be non-negative.")
+        # beta_q: dense server-contention (queue) credit added to the Deadline
+        # head cost.  Delta-C_t/D_w only charges a task when it extends its own
+        # workflow's partial makespan, so a task that queues behind others on a
+        # cheap server but is not the current longest pole pays nothing.  This
+        # term charges every task for the wait its own placement incurred.  It
+        # shapes credit assignment inside the Deadline head only; the dual still
+        # regulates the unchanged CVaR workflow-miss-rate constraint.
+        # Default 0.0 reproduces the pre-2026-09-03 behaviour bit-for-bit.
+        self.deadline_queue_weight = float(
+            config.get("deadline_queue_weight", 0.0)
+        )
+        if self.deadline_queue_weight < 0.0:
+            raise ValueError("deadline_queue_weight must be non-negative.")
+        # The share beta_q should carry of the Deadline head's dense cost.  The
+        # raw weight is not portable across testbed sizes -- the same value
+        # buys a 1.87x different share on 20+6 than on 28+9 -- so the share is
+        # what the config holds and DeadlineQueueWeightCalibrator solves the
+        # weight from a rollout.  0.0 keeps beta_q under manual control.
+        self.deadline_queue_share = float(
+            config.get("deadline_queue_share", 0.0)
+        )
+        if not 0.0 <= self.deadline_queue_share < 1.0:
+            raise ValueError(
+                "deadline_queue_share must be in [0, 1), got "
+                f"{self.deadline_queue_share!r}."
+            )
+        if self.deadline_queue_share > 0.0 and self.deadline_queue_weight > 0.0:
+            raise ValueError(
+                "deadline_queue_share and deadline_queue_weight are two ways "
+                "to set the same term; give exactly one. Got share="
+                f"{self.deadline_queue_share!r}, weight="
+                f"{self.deadline_queue_weight!r}."
+            )
+        # Carried through the checkpoint so a resumed run picks the solve back
+        # up (or keeps the frozen weight) instead of restarting it.
+        self.queue_calibration_state = {}
+        # beta_sd: weak, placement-only task sub-Deadline credit.  It uses the
+        # selected server's rho=1 finish estimate, so lower-layer DVFS is not
+        # blamed for an upper-layer placement decision.
+        self.deadline_sub_weight = float(
+            config.get("deadline_sub_weight", 0.0)
+        )
+        if self.deadline_sub_weight < 0.0:
+            raise ValueError("deadline_sub_weight must be non-negative.")
+        if (
+            self.deadline_sub_weight > 0.0
+            and self.reward_profile == "sub_deadline_lagrangian_v1"
+        ):
+            raise ValueError(
+                "deadline_sub_weight cannot be combined with the legacy "
+                "sub_deadline_lagrangian_v1 profile."
+            )
         self.time_reward_mode = str(
             config.get("time_reward_mode", "legacy_slack")
         ).strip().lower()
@@ -114,18 +166,42 @@ class HierarchicalObjective:
         self.high_makespan_component_sums = {}
 
     def state_dict(self):
-        return {"deadline_lambda": float(self.deadline_lambda)}
+        return {
+            "deadline_lambda": float(self.deadline_lambda),
+            # beta_q is solved during training, not read from the config, so a
+            # resumed run has no other way to recover it.
+            "deadline_queue_weight": float(self.deadline_queue_weight),
+            "queue_calibration": dict(self.queue_calibration_state),
+        }
 
     def load_state_dict(self, state):
         state = dict(state or {})
         if "deadline_lambda" in state:
             self.set_deadline_lambda(state["deadline_lambda"])
+        if "deadline_queue_weight" in state:
+            self.set_deadline_queue_weight(state["deadline_queue_weight"])
+        self.queue_calibration_state = dict(state.get("queue_calibration", {}))
 
     def set_deadline_lambda(self, value):
         value = float(value)
         if not math.isfinite(value) or value < 0.0:
             raise ValueError("deadline lambda must be finite and non-negative.")
         self.deadline_lambda = value
+
+    def set_deadline_queue_weight(self, value):
+        """Install the calibrated beta_q.
+
+        The objective and the Deadline head read this weight independently --
+        one normalizes the per-step wait, the other weights it when rebuilding
+        the head's target from the buffer -- so the trainer must set both from
+        the same solve or the two halves of the term disagree.
+        """
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(
+                "deadline_queue_weight must be finite and non-negative."
+            )
+        self.deadline_queue_weight = value
 
     def compute_step_feedback(self, env, state, high_decision, low_decision, env_action, env_reward, info) -> dict:
         event = dict((info or {}).get("event", {}))
@@ -216,6 +292,8 @@ class HierarchicalObjective:
                 primary_energy_ref=primary_energy_ref,
                 workflow_task_count=workflow_task_count,
                 task_energy_scale=task_energy_scale,
+                decision_context=decision_context,
+                selected_server_id=env_action["server_id"],
             )
 
         # The incremental time cost telescopes to -C_w / D_w over the whole
@@ -338,6 +416,8 @@ class HierarchicalObjective:
         primary_energy_ref,
         workflow_task_count,
         task_energy_scale,
+        decision_context,
+        selected_server_id,
     ):
         """Return raw high-level CMDP components for replay recomposition.
 
@@ -391,6 +471,40 @@ class HierarchicalObjective:
         )
         sub_deadline_relative = None
         sub_deadline_finish_relative = None
+        normalized_sub_deadline_lateness = 0.0
+        if self.deadline_sub_weight > 0.0:
+            selected_server_id = str(selected_server_id)
+            selected_metrics = decision_context.get(
+                "server_safety_metrics", {}
+            ).get(selected_server_id, {})
+            required = (
+                "task_sub_deadline_relative",
+                "task_sub_deadline_absolute",
+                "estimated_ast",
+                "execution_time_rho_1",
+            )
+            missing = [key for key in required if selected_metrics.get(key) is None]
+            if missing:
+                raise KeyError(
+                    "deadline_sub_weight > 0 requires sub-Deadline safety "
+                    f"metrics {missing} for workflow={workflow_id}, "
+                    f"task={task_id}, server={selected_server_id}."
+                )
+            sub_deadline_relative = float(
+                selected_metrics["task_sub_deadline_relative"]
+            )
+            estimated_finish_rho1 = float(selected_metrics["estimated_ast"]) + float(
+                selected_metrics["execution_time_rho_1"]
+            )
+            workflow_arrival = float(workflow_state["arrival_time"])
+            sub_deadline_finish_relative = max(
+                0.0, estimated_finish_rho1 - workflow_arrival
+            )
+            normalized_sub_deadline_lateness = max(
+                0.0,
+                estimated_finish_rho1
+                - float(selected_metrics["task_sub_deadline_absolute"]),
+            ) / (deadline * workflow_task_count)
         if self.reward_profile == "sub_deadline_lagrangian_v1":
             sub_deadline_relative = workflow_state.get(
                 "task_sub_deadlines_relative", {}
@@ -420,6 +534,50 @@ class HierarchicalObjective:
             deadline_constraint_cost = max(
                 0.0, float(normalized_makespan_increment)
             )
+        # Dense server-contention credit.  Divided by N_w for the same reason
+        # the energy term is: without it the same beta_q behaves differently on
+        # small and middle, because Sum_t q_t grows with the task count while
+        # Sum_t Delta-C_t/D_w telescopes to C_w/D_w ~ 1.
+        queue_delay_seconds = task_timing.get("task_queue_delay")
+        normalized_queue_delay = (
+            0.0
+            if queue_delay_seconds is None
+            else float(queue_delay_seconds) / (deadline * workflow_task_count)
+        )
+        queue_constraint_cost = (
+            self.deadline_queue_weight * normalized_queue_delay
+        )
+        sub_deadline_constraint_cost = (
+            self.deadline_sub_weight * normalized_sub_deadline_lateness
+        )
+        if self.deadline_queue_weight > 0.0 and queue_delay_seconds is None:
+            raise KeyError(
+                "deadline_queue_weight > 0 requires 'primary_ast' and "
+                "'base_ready_time_primary' in the step event for "
+                f"workflow={workflow_id}, task={task_id}."
+            )
+        deadline_constraint_cost = (
+            deadline_constraint_cost
+            + queue_constraint_cost
+            + sub_deadline_constraint_cost
+        )
+        metrics_by_server = decision_context.get("server_safety_metrics", {})
+        selected_metrics = metrics_by_server.get(str(selected_server_id), {})
+        predicted_finishes = [
+            float(metrics["predicted_workflow_finish_rho_1"])
+            for metrics in metrics_by_server.values()
+            if metrics.get("predicted_workflow_finish_rho_1") is not None
+            and math.isfinite(float(metrics["predicted_workflow_finish_rho_1"]))
+        ]
+        selected_predicted_finish = selected_metrics.get(
+            "predicted_workflow_finish_rho_1"
+        )
+        future_finish_regret_normalized = 0.0
+        if selected_predicted_finish is not None and predicted_finishes:
+            future_finish_regret_normalized = max(
+                0.0,
+                float(selected_predicted_finish) - min(predicted_finishes),
+            ) / deadline
         feasible_risk_mode = self.reward_mode == "feasible_deadline_risk"
         lagrangian_penalty = (
             0.0
@@ -481,6 +639,31 @@ class HierarchicalObjective:
             "high_base_energy_reward_local": base_energy_reward,
             "high_team_energy_reward": 0.0,
             "high_deadline_constraint_cost": deadline_constraint_cost,
+            # Raw seconds are what the three-head Deadline target consumes; the
+            # normalized/weighted forms are diagnostics so the queue share of
+            # the cost is readable in the training rows.
+            "high_queue_delay_seconds": float(queue_delay_seconds or 0.0),
+            "high_queue_delay_normalized": float(normalized_queue_delay),
+            "high_queue_constraint_cost": float(queue_constraint_cost),
+            "deadline_queue_weight": float(self.deadline_queue_weight),
+            "high_sub_deadline_normalized": float(
+                normalized_sub_deadline_lateness
+            ),
+            "high_sub_deadline_constraint_cost": float(
+                sub_deadline_constraint_cost
+            ),
+            "deadline_sub_weight": float(self.deadline_sub_weight),
+            "high_predicted_workflow_finish_rho1": (
+                None
+                if selected_predicted_finish is None
+                else float(selected_predicted_finish)
+            ),
+            "high_best_predicted_workflow_finish_rho1": (
+                None if not predicted_finishes else float(min(predicted_finishes))
+            ),
+            "high_future_finish_regret_normalized": float(
+                future_finish_regret_normalized
+            ),
             "high_lagrangian_penalty": lagrangian_penalty,
             "high_training_reward": training_reward,
             "deadline_lambda": (
@@ -506,7 +689,7 @@ class HierarchicalObjective:
             "sub_deadline_constraint_cost": (
                 deadline_constraint_cost
                 if self.reward_profile == "sub_deadline_lagrangian_v1"
-                else 0.0
+                else sub_deadline_constraint_cost
             ),
             "previous_slack_ratio": previous_slack_ratio,
             "current_slack_ratio": current_slack_ratio,
@@ -1019,7 +1202,29 @@ class HierarchicalObjective:
             "task_fastest_time": fastest_time,
             "task_ready_time": task_ready_time,
             "task_finish_time": task_finish_time,
+            "task_queue_delay": self._server_queue_delay(event),
         }
+
+    @staticmethod
+    def _server_queue_delay(event):
+        """Return the realized server-contention wait of the primary replica.
+
+        ``ast - base_ready_time`` isolates the wait caused by the *chosen*
+        server already being busy.  It excludes the communication time and the
+        ready-queue delay (both of which the task incurs wherever it goes), and
+        it is independent of rho because the low-level DVFS action only scales
+        ``exec_time``, which starts at ``ast``.  Attribution therefore stays
+        disjoint from the SAC dual's ``dvfs_delay_share``.
+
+        Returns ``None`` when the event does not carry both timestamps, so a
+        caller that needs the value can fail loudly instead of reading a
+        silent zero.
+        """
+        ast = event.get("primary_ast", event.get("AST_primary"))
+        base_ready_time = event.get("base_ready_time_primary")
+        if ast is None or base_ready_time is None:
+            return None
+        return max(0.0, float(ast) - float(base_ready_time))
 
     def _fastest_complete_task_time(self, metrics_by_id, servers, task_ready_time):
         candidates = []

@@ -881,6 +881,8 @@ class OOActorCriticAgent:
     ):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        saved_config = copy.deepcopy(config if config is not None else self.config)
+        training_config = dict(saved_config.get("training", {}))
         payload = {
             "checkpoint_format": "adapted_oo_actor_critic_v1",
             "actor_state_dict": self.actor.state_dict(),
@@ -902,7 +904,17 @@ class OOActorCriticAgent:
             "energy_reward_statistics": self.energy_statistics(),
             "shared_reward_statistics": self.reward_statistics(),
             "episode": int(episode),
-            "config": copy.deepcopy(config if config is not None else self.config),
+            "config": saved_config,
+            "experiment_config": saved_config,
+            "checkpoint_policy": {
+                "mode": "feasible_then_min_energy",
+                "deadline_target": float(
+                    training_config.get("checkpoint_deadline_target", 0.92)
+                ),
+                "reliability_target": float(
+                    training_config.get("checkpoint_reliability_target", 1.0)
+                ),
+            },
             "numpy_rng_state": copy.deepcopy(self.rng.bit_generator.state),
             "torch_random_state": torch.random.get_rng_state(),
             "cuda_random_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,

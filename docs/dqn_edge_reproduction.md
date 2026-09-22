@@ -25,7 +25,7 @@ This baseline adapts Wen et al., "Deep reinforcement learning for energy-efficie
   context attention, and VM-only action. It does **not** instantiate or update
   a Lagrange multiplier.
 
-`configs/dqn_edge.json` selects `paper_normalized` by default. Its latency and
+`configs/dqn_edge_small_20edge_6cloud.json` selects `paper_normalized` by default. Its latency and
 energy components are written to separate replay fields and learned by the
 paper's separate objective Q-networks. The normalization denominators are the
 same for every candidate action in a state, so they correct scale without

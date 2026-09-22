@@ -120,8 +120,11 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
 
     def _next_actions(self, next_states, next_masks, deadline_lambda, reliability_lambda=1.0):
         with torch.no_grad():
+            deadline = self.deadline_q_eval(next_states)
+            if self.nonnegative_deadline_q:
+                deadline = torch.clamp(deadline, min=0.0)
             combined = (self.energy_q_eval(next_states)
-                        - float(deadline_lambda) * self.deadline_q_eval(next_states)
+                        - float(deadline_lambda) * deadline
                         - float(reliability_lambda) * self.reliability_q_eval(next_states))
             return torch.argmax(combined.masked_fill(~next_masks, -1e9), dim=-1)
 
@@ -140,10 +143,12 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
         with torch.no_grad():
             next_actions = self._next_actions(next_states, next_masks, deadline_lambda, reliability_lambda)
 
-        def loss_for(online, target, rewards, gamma):
+        def loss_for(online, target, rewards, gamma, *, nonnegative_target=False):
             q = online(states)[row, actions]
             with torch.no_grad():
                 target_q = target(next_states)[row, next_actions]
+                if nonnegative_target:
+                    target_q = torch.clamp(target_q, min=0.0)
                 target_q = torch.where(dones, torch.zeros_like(target_q), target_q)
                 y = rewards + float(gamma) * target_q
             return F.smooth_l1_loss(q, y), q, y
@@ -151,7 +156,8 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
         energy_loss, energy_q, _ = loss_for(self.energy_q_eval, self.energy_q_target,
                                              torch.as_tensor(batch["energy_rewards"], dtype=torch.float32, device=self.device), self.energy_gamma)
         deadline_loss, deadline_q, _ = loss_for(self.deadline_q_eval, self.deadline_q_target,
-                                                 torch.as_tensor(batch["deadline_costs"], dtype=torch.float32, device=self.device), self.deadline_gamma)
+                                                 torch.as_tensor(batch["deadline_costs"], dtype=torch.float32, device=self.device), self.deadline_gamma,
+                                                 nonnegative_target=self.nonnegative_deadline_q)
         reliability_loss, reliability_q, reliability_target = loss_for(self.reliability_q_eval, self.reliability_q_target,
                                                                          rel_rewards, self.reliability_gamma)
         total = energy_loss + deadline_loss + reliability_loss
@@ -238,6 +244,7 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
             replay_size=int(config.get("replay_size", 50000)), batch_size=int(config.get("batch_size", 256)),
             max_grad_norm=float(config.get("max_grad_norm", 1.0)),
             deadline_positive_fraction=float(config.get("deadline_positive_fraction", 0.3)),
+            nonnegative_deadline_q=bool(config.get("nonnegative_deadline_q", False)),
             device=config.get("device", "auto"), seed=seed,
         )
         # Compatibility names used by the production checkpoint/logger path.
@@ -282,12 +289,53 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
         # Keep the production dual-head Deadline target unchanged.  The
         # rollout buffer stores raw Delta-makespan seconds, while the Deadline
         # head is trained on the configured normalized/miss-credit signal.
+        episode_failed = 0.0
+        responsibility_total = 0.0
         if self.deadline_head_cost_mode == "dense_normalized_makespan_miss_credit":
             deadline_costs, deadline_misses = (
                 self.workflow_dense_miss_credit_deadline_costs(
                     buffer,
                     miss_penalty=self.deadline_miss_penalty,
+                    queue_weight=self.deadline_queue_weight,
+                    sub_deadline_weight=self.deadline_sub_weight,
+                    future_regret_weight=self.deadline_future_regret_weight,
                 )
+            )
+        elif self.deadline_head_cost_mode == "episode_failure_counterfactual_credit":
+            (
+                deadline_costs,
+                deadline_misses,
+                episode_failed,
+                responsibility_total,
+            ) = self.episode_failure_counterfactual_deadline_costs(
+                buffer,
+                episode_deadline_target=float(
+                    getattr(
+                        self.deadline_lagrangian,
+                        "episode_deadline_target",
+                        0.92,
+                    )
+                ),
+            )
+        elif self.deadline_head_cost_mode == "dense_miss_plus_episode_failure_credit":
+            (
+                deadline_costs,
+                deadline_misses,
+                episode_failed,
+                responsibility_total,
+            ) = self.dense_miss_plus_episode_failure_deadline_costs(
+                buffer,
+                episode_deadline_target=float(
+                    getattr(
+                        self.deadline_lagrangian,
+                        "episode_deadline_target",
+                        0.92,
+                    )
+                ),
+                miss_penalty=self.deadline_miss_penalty,
+                queue_weight=self.deadline_queue_weight,
+                sub_deadline_weight=self.deadline_sub_weight,
+                future_regret_weight=self.deadline_future_regret_weight,
             )
         elif self.deadline_head_cost_mode == "dense_normalized_makespan":
             deadline_costs, deadline_misses = self.workflow_dense_deadline_costs(buffer)
@@ -317,6 +365,11 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
             next_state = zero_state if done else buffer.states[index + 1]
             next_mask = zero_mask if done else np.asarray(buffer.primary_masks[index + 1], dtype=bool)
             info = buffer.infos[index]
+            info["dual_head_workflow_miss"] = float(
+                deadline_misses[str(buffer.workflow_ids[index])]
+            )
+            info["dual_head_episode_failed"] = float(episode_failed)
+            info["dual_head_episode_credit"] = float(deadline_costs[index])
             self.agent_R.remember(
                 buffer.states[index], self.encode_action(buffer.primary_actions[index]),
                 float(info["high_base_energy_reward"]), float(deadline_costs[index]),
@@ -329,7 +382,13 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
         return {"stored": float(buffer.size),
                 "completed_workflows": float(len(completed)),
                 "reliability_cost_total": float(terminal_costs.sum()),
-                "reliability_cost_mean": float(terminal_costs.mean())}
+                "reliability_cost_mean": float(terminal_costs.mean()),
+                "deadline_head_cost_total": float(deadline_costs.sum()),
+                "deadline_head_episode_failed": float(episode_failed),
+                "deadline_head_responsibility_total": float(responsibility_total),
+                "deadline_future_regret_weight": float(
+                    self.deadline_future_regret_weight
+                )}
 
     def update_reliability_lagrangian(self, completed_costs):
         rows = []

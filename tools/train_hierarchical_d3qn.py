@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import heapq
 import json
 import math
 import os
@@ -22,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 
 from src.D3QN.hierarchical_d3qn_agent import HierarchicalD3QNAgent
+from src.D3QN.queue_weight_calibrator import DeadlineQueueWeightCalibrator
 from src.D3QN.reward import HierarchicalObjective
 from src.ppo.hierarchical_rollout import HighRolloutBuffer, LowRolloutBuffer
 from src.sac.reward import build_low_sac_reward_components
@@ -33,13 +35,17 @@ from src.simulator.metrics import compute_summary
 from tools.hierarchical_common import (
     _assert_metrics_finite,
     append_history_row,
+    attach_satisfaction_metrics,
     average_metrics,
     build_env,
     build_episode_metrics_from_buffers,
     build_resources,
     build_workflows,
+    checkpoint_validation_seeds,
+    combine_checkpoint_metrics,
     completed_workflows,
     configure_agent_state,
+    format_satisfaction_summary,
     load_json,
     metric_rank,
     validate_training_config,
@@ -292,8 +298,15 @@ def collect_d3qn_episode(
     low_deterministic,
     fixed_low_rho_one=False,
     high_algorithm="d3qn",
+    low_dual_attribution="workflow_counterfactual",
 ):
     high_algorithm = _normalize_high_algorithm(high_algorithm)
+    low_dual_attribution = str(low_dual_attribution).strip().lower()
+    if low_dual_attribution not in {"counterfactual", "workflow_counterfactual"}:
+        raise ValueError(
+            "low_dual_attribution must be 'counterfactual' or "
+            f"'workflow_counterfactual'; got {low_dual_attribution!r}."
+        )
     if getattr(agent.high_agent, "deadline_lagrangian", None) is not None:
         objective.set_deadline_lambda(agent.high_agent.deadline_lambda)
     state = env.reset()
@@ -310,6 +323,7 @@ def collect_d3qn_episode(
     low_candidate_count = 0
     low_accepted_count = 0
     forced_max_count = 0
+    rho_floor_binding_count = 0
     rho_safe_at_one_count = 0
     shield_relaxed_count = 0
     backup_shield_relaxed_count = 0
@@ -492,6 +506,11 @@ def collect_d3qn_episode(
         low_candidate_count += 1
         if bool(low_decision.get("forced_max_frequency", False)):
             forced_max_count += 1
+        # How often the sampled rho fell below the server's action floor and was
+        # clipped.  The actor's log-prob refers to the pre-clip value, so a large
+        # rate means the policy is credited for a frequency it never executes.
+        if float(low_decision.get("rho_floor_binding", 0.0)) > 0.5:
+            rho_floor_binding_count += 1
         if float(low_decision.get("rho_safe", 0.0)) >= 1.0 - 1e-6:
             rho_safe_at_one_count += 1
         if (not fixed_low_rho_one) and bool(low_decision.get("actor_update_mask", False)):
@@ -614,9 +633,18 @@ def collect_d3qn_episode(
                 )), 0.0)
                 for index in indices
             ))
-        )
+    )
     cumulative_low_deadline_details = {}
-    if objective.reward_profile == "ctde_placement_cumulative_v2":
+    low_deadline_replay_costs = None
+    if low_dual_attribution == "workflow_counterfactual":
+        (
+            low_deadline_replay_costs,
+            low_deadline_dual_costs,
+            cumulative_low_deadline_details,
+        ) = _workflow_counterfactual_low_deadline_credit(
+            workflow_results, episode_low_sac_transitions
+        )
+    elif objective.reward_profile == "ctde_placement_cumulative_v2":
         (
             low_deadline_dual_costs,
             cumulative_low_deadline_details,
@@ -626,7 +654,7 @@ def collect_d3qn_episode(
     if objective.reward_profile in {
         "ep740_lagrangian_v1",
         "sub_deadline_lagrangian_v1",
-    }:
+    } and low_dual_attribution != "workflow_counterfactual":
         # Exact ep740 credit semantics: keep each upper Delta-C/D cost and
         # each lower counterfactual DVFS cost unchanged.  Lambda is still
         # updated at episode end; only the transition credit is restored.
@@ -660,7 +688,11 @@ def collect_d3qn_episode(
         # and the chosen rho crossed the workflow Deadline boundary. Merely
         # worsening a workflow that already misses at rho=1 remains an upper
         # placement failure.
-        low_deadline_constraint_costs = list(low_deadline_dual_costs)
+        low_deadline_constraint_costs = list(
+            low_deadline_dual_costs
+            if low_deadline_replay_costs is None
+            else low_deadline_replay_costs
+        )
         low_causal_miss_by_workflow = dict(
             zip(workflow_ids, low_deadline_constraint_costs)
         )
@@ -674,7 +706,9 @@ def collect_d3qn_episode(
             low_transition_counts = {}
             low_raw_cost_totals = {}
             raw_cost_key = (
-                "workflow_makespan_delay_seconds"
+                "time_increase_seconds"
+                if low_dual_attribution == "workflow_counterfactual"
+                else "workflow_makespan_delay_seconds"
                 if objective.reward_profile == "ctde_placement_cumulative_v2"
                 else "deadline_constraint_cost"
             )
@@ -717,15 +751,24 @@ def collect_d3qn_episode(
                 reward_components["deadline_constraint_cost"] = float(
                     low_causal_miss_by_workflow.get(workflow_id, 0.0)
                 ) * deadline_share
-                if objective.reward_profile == "ctde_placement_cumulative_v2":
+                if (
+                    objective.reward_profile == "ctde_placement_cumulative_v2"
+                    or low_dual_attribution == "workflow_counterfactual"
+                ):
                     responsible_share = float(
                         reward_components["deadline_constraint_cost"]
                     )
                     reward_components["deadline_counterfactual_cost"] = (
                         responsible_share
                     )
-                    reward_components["deadline_counterfactual_crossed"] = float(
-                        responsible_share > 0.0
+                    reward_components["deadline_counterfactual_crossed"] = (
+                        float(
+                            cumulative_low_deadline_details.get(
+                                workflow_id, {}
+                            ).get("responsible_crossing", 0.0)
+                        )
+                        if low_dual_attribution == "workflow_counterfactual"
+                        else float(responsible_share > 0.0)
                     )
                 agent.low_agent.remember_transition(
                     transition["state"],
@@ -744,6 +787,7 @@ def collect_d3qn_episode(
         "low_buffer_acceptance_rate": 0.0 if low_candidate_count == 0 else low_accepted_count / low_candidate_count,
         "rho_safe_at_one_rate": 0.0 if low_candidate_count == 0 else rho_safe_at_one_count / low_candidate_count,
         "forced_max_frequency_rate": 0.0 if low_candidate_count == 0 else forced_max_count / low_candidate_count,
+        "rho_floor_binding_rate": 0.0 if low_candidate_count == 0 else rho_floor_binding_count / low_candidate_count,
         "primary_selection_counts": primary_counts,
         "backup_selection_counts": backup_counts,
         "rho_mean": float(np.mean(rho_values)) if rho_values else 0.0,
@@ -816,6 +860,19 @@ def collect_d3qn_episode(
             else (deadline_usage > 1.0).astype(np.float64),
             dtype=np.float64,
         )
+        high_lagrangian = agent.high_agent.deadline_lagrangian
+        if (
+            getattr(high_lagrangian, "constraint_metric", "")
+            in getattr(high_lagrangian, "EPISODE_METRICS", ())
+        ):
+            # The episode metric's cost is this episode's pass/fail bit, not the
+            # pooled miss rate, so the two cannot share one excess expression.
+            episode_cost = float(
+                1.0 - float(np.mean(high_constraint_values))
+                < high_lagrangian.episode_deadline_target - 1e-9
+            )
+        else:
+            episode_cost = float(np.mean(high_constraint_values))
         metrics.update(
             {
                 "lambda_deadline": agent.high_agent.deadline_lambda,
@@ -835,8 +892,7 @@ def collect_d3qn_episode(
                     agent.high_agent.deadline_lagrangian.budget
                 ),
                 "deadline_excess": float(
-                    np.mean(high_constraint_values)
-                    - agent.high_agent.deadline_lagrangian.budget
+                    episode_cost - agent.high_agent.deadline_lagrangian.budget
                 ),
                 "sub_deadline_constraint_mean": (
                     float(np.mean(high_sub_deadline_costs))
@@ -965,6 +1021,304 @@ def _cumulative_low_deadline_credit(workflow_results, low_transitions):
             "deadline": deadline,
         }
     return costs, details
+
+
+def _fixed_schedule_counterfactual_model(workflow_results):
+    """Build the fixed placement/order DAG used by DVFS counterfactual replay."""
+    nodes = {}
+    workflow_meta = {}
+    server_rows = {}
+    for result in workflow_results:
+        workflow_id = str(result["workflow_id"])
+        task_plans = result.get("task_plans") or []
+        if not task_plans or any(
+            "parents" not in row or "parent_transfer_times_primary" not in row
+            for row in task_plans
+        ):
+            return None
+        workflow_meta[workflow_id] = {
+            "arrival_time": float(result["arrival_time"]),
+            "download_time": max(
+                0.0,
+                float(result["finish_time"]) - float(result["compute_finish_time"]),
+            ),
+        }
+        for row in task_plans:
+            key = (workflow_id, int(row["task_id"]))
+            nodes[key] = row
+            server_rows.setdefault(int(row["primary_server"]), []).append(key)
+
+    predecessors = {key: {} for key in nodes}
+    for key, row in nodes.items():
+        workflow_id, _task_id = key
+        transfer_times = {
+            int(parent_id): float(value)
+            for parent_id, value in dict(
+                row.get("parent_transfer_times_primary", {})
+            ).items()
+        }
+        for parent_id in row.get("parents", []):
+            parent_key = (workflow_id, int(parent_id))
+            if parent_key not in nodes:
+                raise RuntimeError(f"Counterfactual replay missing parent {parent_key}.")
+            predecessors[key][parent_key] = max(
+                predecessors[key].get(parent_key, 0.0),
+                transfer_times.get(int(parent_id), 0.0),
+            )
+
+    for server_id, keys in server_rows.items():
+        ordered = sorted(
+            keys,
+            key=lambda key: (
+                float(nodes[key]["primary_ast"]),
+                float(nodes[key]["primary_aft"]),
+                key[0],
+                key[1],
+            ),
+        )
+        for previous, current in zip(ordered, ordered[1:]):
+            predecessors[current][previous] = max(
+                predecessors[current].get(previous, 0.0), 0.0
+            )
+
+    successors = {key: [] for key in nodes}
+    indegree = {key: len(parents) for key, parents in predecessors.items()}
+    for key, parents in predecessors.items():
+        for parent in parents:
+            successors[parent].append(key)
+    ready = [key for key, count in indegree.items() if count == 0]
+    heapq.heapify(ready)
+    order = []
+    while ready:
+        key = heapq.heappop(ready)
+        order.append(key)
+        for child in successors[key]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                heapq.heappush(ready, child)
+    if len(order) != len(nodes):
+        raise RuntimeError("Fixed schedule counterfactual graph contains a cycle.")
+    return nodes, predecessors, order, workflow_meta
+
+
+def _replay_fixed_schedule(model, restored_workflow_ids):
+    """Replay one schedule with selected workflows restored to rho=1."""
+    nodes, predecessors, order, workflow_meta = model
+    restored_workflow_ids = {str(value) for value in restored_workflow_ids}
+    finish_times = {}
+    workflow_compute_finish = {workflow_id: 0.0 for workflow_id in workflow_meta}
+    for key in order:
+        workflow_id, _task_id = key
+        row = nodes[key]
+        ready_time = max(
+            float(row.get("current_time", workflow_meta[workflow_id]["arrival_time"])),
+            workflow_meta[workflow_id]["arrival_time"],
+        )
+        for parent, transfer_time in predecessors[key].items():
+            ready_time = max(
+                ready_time, finish_times[parent] + float(transfer_time)
+            )
+        execution_time = float(row["primary_exec_time"])
+        if workflow_id in restored_workflow_ids:
+            execution_time *= float(row.get("primary_rho", 1.0))
+        finish_times[key] = ready_time + max(execution_time, 0.0)
+        workflow_compute_finish[workflow_id] = max(
+            workflow_compute_finish[workflow_id], finish_times[key]
+        )
+    return {
+        workflow_id: max(
+            0.0,
+            compute_finish
+            + workflow_meta[workflow_id]["download_time"]
+            - workflow_meta[workflow_id]["arrival_time"],
+        )
+        for workflow_id, compute_finish in workflow_compute_finish.items()
+    }
+
+
+def _legacy_workflow_counterfactual_credit(workflow_results, delay_by_workflow):
+    """Fallback for synthetic/legacy rows that do not carry task plans."""
+    costs = []
+    details = {}
+    for row in workflow_results:
+        workflow_id = str(row["workflow_id"])
+        deadline = max(float(row["relative_deadline"]), 1e-8)
+        actual_response = float(row["response_time"])
+        accumulated_delay = float(delay_by_workflow.get(workflow_id, 0.0))
+        counterfactual_response = max(0.0, actual_response - accumulated_delay)
+        actual_violation = max(0.0, (actual_response - deadline) / deadline)
+        counterfactual_violation = max(
+            0.0, (counterfactual_response - deadline) / deadline
+        )
+        responsible_cost = float(
+            np.clip(actual_violation - counterfactual_violation, 0.0, 1.0)
+        )
+        costs.append(responsible_cost)
+        details[workflow_id] = {
+            "responsible": float(responsible_cost > 0.0),
+            "responsible_cost": responsible_cost,
+            "self_responsible_cost": responsible_cost,
+            "external_responsible_cost": 0.0,
+            "affected_workflow_count": int(responsible_cost > 0.0),
+            "responsible_crossing": float(
+                actual_response > deadline + 1e-8
+                and counterfactual_response <= deadline + 1e-8
+            ),
+            "accumulated_delay_seconds": accumulated_delay,
+            "counterfactual_response_time": counterfactual_response,
+            "actual_response_time": actual_response,
+            "actual_violation": actual_violation,
+            "counterfactual_violation": counterfactual_violation,
+            "deadline": deadline,
+        }
+    return costs, list(costs), details
+
+
+def _workflow_counterfactual_low_deadline_credit(
+    workflow_results, low_transitions
+):
+    """Return source replay credit and victim dual costs under fixed decisions.
+
+    Placement and per-server order are fixed.  Restoring a source workflow to
+    rho=1 propagates through DAG and server-precedence edges, so the resulting
+    marginal includes delays imposed on other workflows.  Victim cost is then
+    conserved when allocated back to source workflows, preventing duplicate
+    punishment when several slow workflows contributed to one miss.
+    """
+    delay_by_workflow = {}
+    for transition in low_transitions:
+        workflow_id = str(transition["workflow_id"])
+        components = transition.get("reward_components") or {}
+        delay = max(0.0, float(components.get("time_increase_seconds", 0.0)))
+        delay_by_workflow[workflow_id] = (
+            float(delay_by_workflow.get(workflow_id, 0.0)) + delay
+        )
+
+    model = _fixed_schedule_counterfactual_model(workflow_results)
+    if model is None:
+        return _legacy_workflow_counterfactual_credit(
+            workflow_results, delay_by_workflow
+        )
+
+    workflow_ids = [str(row["workflow_id"]) for row in workflow_results]
+    result_by_id = {str(row["workflow_id"]): row for row in workflow_results}
+    actual_violation = {
+        workflow_id: max(
+            0.0,
+            (
+                float(result_by_id[workflow_id]["response_time"])
+                - max(float(result_by_id[workflow_id]["relative_deadline"]), 1e-8)
+            )
+            / max(float(result_by_id[workflow_id]["relative_deadline"]), 1e-8),
+        )
+        for workflow_id in workflow_ids
+    }
+    all_rho1_response = _replay_fixed_schedule(model, workflow_ids)
+    dual_cost_by_victim = {
+        workflow_id: float(
+            np.clip(
+                actual_violation[workflow_id]
+                - max(
+                    0.0,
+                    (
+                        all_rho1_response[workflow_id]
+                        - max(
+                            float(result_by_id[workflow_id]["relative_deadline"]),
+                            1e-8,
+                        )
+                    )
+                    / max(
+                        float(result_by_id[workflow_id]["relative_deadline"]),
+                        1e-8,
+                    ),
+                ),
+                0.0,
+                1.0,
+            )
+        )
+        for workflow_id in workflow_ids
+    }
+
+    marginal = {source: {} for source in workflow_ids}
+    source_responses = {}
+    for source in workflow_ids:
+        responses = _replay_fixed_schedule(model, [source])
+        source_responses[source] = responses
+        for victim in workflow_ids:
+            deadline = max(
+                float(result_by_id[victim]["relative_deadline"]), 1e-8
+            )
+            counterfactual_violation = max(
+                0.0, (responses[victim] - deadline) / deadline
+            )
+            marginal[source][victim] = max(
+                0.0, actual_violation[victim] - counterfactual_violation
+            )
+
+    replay_credit = {workflow_id: 0.0 for workflow_id in workflow_ids}
+    allocations = {source: {} for source in workflow_ids}
+    delay_total = sum(delay_by_workflow.values())
+    for victim in workflow_ids:
+        victim_cost = dual_cost_by_victim[victim]
+        if victim_cost <= 0.0:
+            continue
+        denominator = sum(marginal[source][victim] for source in workflow_ids)
+        for source in workflow_ids:
+            if denominator > 1e-12:
+                share = marginal[source][victim] / denominator
+            elif delay_total > 1e-12:
+                # Interaction-only failure: no single restoration repairs the
+                # victim, so conserve its cost using each source's slowdown mass.
+                share = delay_by_workflow.get(source, 0.0) / delay_total
+            else:
+                share = 0.0
+            allocated = victim_cost * share
+            replay_credit[source] += allocated
+            allocations[source][victim] = allocated
+
+    details = {}
+    for source in workflow_ids:
+        row = result_by_id[source]
+        deadline = max(float(row["relative_deadline"]), 1e-8)
+        source_response = source_responses[source][source]
+        responsible_crossing = any(
+            float(result_by_id[victim]["response_time"])
+            > float(result_by_id[victim]["relative_deadline"]) + 1e-8
+            and source_responses[source][victim]
+            <= float(result_by_id[victim]["relative_deadline"]) + 1e-8
+            for victim in workflow_ids
+        )
+        details[source] = {
+            "responsible": float(replay_credit[source] > 0.0),
+            "responsible_cost": float(replay_credit[source]),
+            "self_responsible_cost": float(allocations[source].get(source, 0.0)),
+            "external_responsible_cost": float(
+                sum(
+                    value
+                    for victim, value in allocations[source].items()
+                    if victim != source
+                )
+            ),
+            "affected_workflow_count": int(
+                sum(value > 1e-12 for value in allocations[source].values())
+            ),
+            "responsible_crossing": float(responsible_crossing),
+            "accumulated_delay_seconds": float(
+                delay_by_workflow.get(source, 0.0)
+            ),
+            "counterfactual_response_time": float(source_response),
+            "actual_response_time": float(row["response_time"]),
+            "actual_violation": float(actual_violation[source]),
+            "counterfactual_violation": max(
+                0.0, (source_response - deadline) / deadline
+            ),
+            "deadline": deadline,
+        }
+    return (
+        [float(replay_credit[workflow_id]) for workflow_id in workflow_ids],
+        [float(dual_cost_by_victim[workflow_id]) for workflow_id in workflow_ids],
+        details,
+    )
 
 
 def _apply_cooperative_workflow_credit(
@@ -1113,7 +1467,7 @@ def evaluate_agent(
     finally:
         if old_epsilon is not None:
             agent.high_agent.epsilon = old_epsilon
-    return average_metrics(rows)
+    return attach_satisfaction_metrics(average_metrics(rows), rows)
 
 
 def configure_d3qn_agent_state(config, resources, smoke_test=False):
@@ -1301,6 +1655,11 @@ def print_d3qn_metrics_block(label, row):
             f"miss_rate={float(row.get('deadline_miss_rate', 0.0)):.6g} "
             f"budget={float(row.get('deadline_constraint_budget', 1.0)):.6g} "
             f"dual_cost={float(row.get('deadline_constraint_batch_mean', row.get('sub_deadline_constraint_mean', 0.0))):.6g} "
+            # c_e is this episode's pass/fail bit and esp_fail its window rate;
+            # under constraint_metric=episode_deadline_failure the latter is
+            # what the multiplier above is actually regulating.
+            f"c_e={int(row.get('deadline_episode_failed', 0.0))} "
+            f"esp_fail={float(row.get('deadline_episode_failure_rate', 0.0)):.4f} "
             f"C/D_mean={float(row.get('mean_C_over_D', 0.0)):.6g} "
             f"C/D_p95={float(row.get('p95_C_over_D', 0.0)):.6g} "
             f"C/D_max={float(row.get('max_C_over_D', 0.0)):.6g} "
@@ -1434,6 +1793,67 @@ def run_training(
     config["agent"] = agent_config
     config["training"] = training_cfg
     objective = HierarchicalObjective(config.get("objective", {}))
+    # beta_q is read by two independent consumers: the objective normalizes the
+    # per-step wait, and the Deadline head weights it when it rebuilds its
+    # target from the rollout buffer.  objective.deadline_queue_weight is the
+    # single source of truth; a conflicting explicit agent value is a config
+    # error, not something to silently resolve.
+    high_queue_weight = agent_config.setdefault("high", {}).get(
+        "deadline_queue_weight"
+    )
+    if (
+        high_queue_weight is not None
+        and abs(float(high_queue_weight) - objective.deadline_queue_weight) > 1e-12
+    ):
+        raise ValueError(
+            "agent.high.deadline_queue_weight="
+            f"{float(high_queue_weight)} conflicts with "
+            f"objective.deadline_queue_weight={objective.deadline_queue_weight}"
+        )
+    agent_config["high"]["deadline_queue_weight"] = (
+        objective.deadline_queue_weight
+    )
+    high_sub_weight = agent_config["high"].get("deadline_sub_weight")
+    if (
+        high_sub_weight is not None
+        and abs(float(high_sub_weight) - objective.deadline_sub_weight) > 1e-12
+    ):
+        raise ValueError(
+            "agent.high.deadline_sub_weight="
+            f"{float(high_sub_weight)} conflicts with "
+            f"objective.deadline_sub_weight={objective.deadline_sub_weight}"
+        )
+    agent_config["high"]["deadline_sub_weight"] = (
+        objective.deadline_sub_weight
+    )
+    # beta_q is solved from a share target rather than configured directly, so
+    # that the same config value works on every testbed size.  Until the window
+    # closes both consumers keep the configured weight (0.0 by default), which
+    # is exactly the pre-calibration behaviour.
+    objective_cfg = dict(config.get("objective", {}))
+    queue_weight_calibrator = (
+        DeadlineQueueWeightCalibrator(
+            objective.deadline_queue_share,
+            start_episode=int(
+                objective_cfg.get("deadline_queue_calibration_start", 150)
+            ),
+            window_episodes=int(
+                objective_cfg.get("deadline_queue_calibration_episodes", 50)
+            ),
+            sub_deadline_weight=objective.deadline_sub_weight,
+        )
+        if objective.deadline_queue_share > 0.0
+        else None
+    )
+    if objective.deadline_sub_weight > 0.0:
+        sub_deadline_cfg = dict(
+            config.get("simulation", {}).get("sub_deadline", {})
+        )
+        if not bool(sub_deadline_cfg.get("enabled", False)):
+            raise ValueError(
+                "deadline_sub_weight > 0 requires "
+                "simulation.sub_deadline.enabled=true"
+            )
     if objective.reward_profile == "sub_deadline_lagrangian_v1":
         sub_deadline_cfg = dict(
             config.get("simulation", {}).get("sub_deadline", {})
@@ -1545,6 +1965,15 @@ def run_training(
         )
         objective.load_state_dict(
             resume_checkpoint_payload.get("objective_state", {})
+        )
+        if queue_weight_calibrator is not None:
+            queue_weight_calibrator.load_state_dict(
+                objective.queue_calibration_state
+            )
+        # Both consumers of beta_q have to come back in step; the agent reads
+        # its own copy and never sees the objective's.
+        agent.high_agent.deadline_queue_weight = (
+            objective.deadline_queue_weight
         )
         training_cfg["initial_full_checkpoint"] = str(
             resume_checkpoint_path
@@ -1746,7 +2175,13 @@ def run_training(
     high_update_count = 0
     low_update_count = 0
     save_replay_buffer = bool(training_cfg.get("save_replay_buffer", False))
-    eval_seed = int(training_cfg.get("eval_seed", seed + 100000))
+    # Checkpoints are ranked on every configured validation block, matching the
+    # three baselines.  ``eval_seed_secondary`` adds a second disjoint 20-seed
+    # block whose runs are pooled with the first, so selection sees 40 instances
+    # instead of 20; the reported numbers still come from a third block that
+    # neither of these touches (tools/accept_v2_checkpoints.py).
+    eval_seeds = checkpoint_validation_seeds(training_cfg, seed + 100000)
+    eval_seed = eval_seeds[0]
     checkpoint_deadline_target = training_cfg.get("checkpoint_deadline_target")
     if checkpoint_deadline_target is not None:
         checkpoint_deadline_target = float(checkpoint_deadline_target)
@@ -1760,6 +2195,32 @@ def run_training(
         if not 0.0 <= checkpoint_reliability_target <= 1.0:
             raise ValueError(
                 "training.checkpoint_reliability_target must be in [0, 1]."
+            )
+    checkpoint_deadline_esp_threshold = training_cfg.get(
+        "checkpoint_deadline_esp_threshold"
+    )
+    checkpoint_deadline_esp_target = training_cfg.get(
+        "checkpoint_deadline_esp_target"
+    )
+    if (checkpoint_deadline_esp_threshold is None) != (
+        checkpoint_deadline_esp_target is None
+    ):
+        raise ValueError(
+            "training.checkpoint_deadline_esp_threshold and "
+            "training.checkpoint_deadline_esp_target must be set together."
+        )
+    if checkpoint_deadline_esp_threshold is not None:
+        checkpoint_deadline_esp_threshold = float(
+            checkpoint_deadline_esp_threshold
+        )
+        checkpoint_deadline_esp_target = float(checkpoint_deadline_esp_target)
+        if not 0.0 <= checkpoint_deadline_esp_threshold <= 1.0:
+            raise ValueError(
+                "training.checkpoint_deadline_esp_threshold must be in [0, 1]."
+            )
+        if not 0.0 <= checkpoint_deadline_esp_target <= 1.0:
+            raise ValueError(
+                "training.checkpoint_deadline_esp_target must be in [0, 1]."
             )
 
     for episode in range(1, total_episodes + 1):
@@ -1786,6 +2247,45 @@ def run_training(
             fixed_low_rho_one=fixed_low_rho_one,
             high_algorithm=high_algorithm,
         )
+        if queue_weight_calibrator is not None:
+            # Solve before this episode's update so the head starts training on
+            # the calibrated target immediately, rather than one episode late.
+            solved = queue_weight_calibrator.observe(
+                high_buffer, global_episode - 1
+            )
+            objective.queue_calibration_state = (
+                queue_weight_calibrator.state_dict()
+            )
+            if solved is not None:
+                objective.set_deadline_queue_weight(solved)
+                agent.high_agent.deadline_queue_weight = solved
+                realized = queue_weight_calibrator.realized_share()
+                print(
+                    f"[queue-calibration] episode {global_episode}: "
+                    f"beta_q={solved:.4f} for share target "
+                    f"{queue_weight_calibrator.share:.3f} "
+                    f"(realized {realized:.3f}) from "
+                    f"{queue_weight_calibrator.observed_workflows} workflows; "
+                    f"I={queue_weight_calibrator.increment_mass:.4f} "
+                    f"Q={queue_weight_calibrator.queue_mass:.4f}"
+                )
+                if solved <= 0.0:
+                    print(
+                        "[queue-calibration] WARNING: no contention was "
+                        "observed, so beta_q resolved to 0 and the queue term "
+                        "is inert. Check that the step events carry "
+                        "'primary_ast' and 'base_ready_time_primary'."
+                    )
+                # beta_q is not in the config, so stdout must not be its only
+                # record.  Drop a standalone file next to the checkpoints.
+                solve_record = queue_weight_calibrator.diagnostics()
+                solve_record["solved_at_episode"] = int(global_episode)
+                with open(
+                    output_dir / "queue_weight_calibration.json",
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    json.dump(solve_record, handle, indent=2)
         if high_algorithm == "d3qn" and not freeze_high:
             high_metrics = agent.high_agent.update(high_buffer)
         else:
@@ -2005,6 +2505,11 @@ def run_training(
             row["low_deadline_lambda"] = float(
                 low_dual_metrics["low_deadline_lambda_after_update"]
             )
+        if queue_weight_calibrator is not None:
+            # Emitted every episode, not only on the solve, so the CSV keeps a
+            # stable header and the accumulating I/Q masses stay inspectable
+            # while the window is still open.
+            row.update(queue_weight_calibrator.diagnostics())
         history.append(row)
         append_history_row(output_dir, "train_history", row)
         print_d3qn_metrics_block("train", row)
@@ -2028,154 +2533,185 @@ def run_training(
             )
             write_history_files(output_dir, "train_history", history, rewrite_jsonl=False)
         if int(training_cfg.get("eval_interval", 20)) > 0 and episode % int(training_cfg.get("eval_interval", 20)) == 0:
-            eval_metrics = evaluate_agent(
-                config,
-                resources,
-                agent,
-                objective,
-                eval_seed,
-                int(training_cfg.get("eval_episodes", 5)),
-                smoke_test=smoke_test,
-                fixed_low_rho_one=fixed_low_rho_one,
-                high_algorithm=high_algorithm,
-            )
-            eval_row = {
-                "episode": episode,
-                "global_episode": global_episode,
-                "phase_name": str(
-                    training_cfg.get("phase_name", "single_stage")
-                ),
-                "phase_index": int(training_cfg.get("phase_index", 1)),
-                "phase_count": int(training_cfg.get("phase_count", 1)),
-                "high_active_episode": (
-                    high_active_episode_offset + episode
-                    if high_algorithm == "d3qn" and not freeze_high
-                    else high_active_episode_offset
-                ),
-                "low_active_episode": (
-                    low_active_episode_offset + episode
-                    if not freeze_low and not fixed_low_rho_one
-                    else low_active_episode_offset
-                ),
-                "high_policy_status": (
-                    "fixed_heuristic_eval"
-                    if high_algorithm != "d3qn"
-                    else "evaluation_deterministic"
-                ),
-                "low_policy_status": (
-                    "fixed_rho1"
-                    if fixed_low_rho_one
-                    else "evaluation_deterministic"
-                ),
-                "high_reward_usage": "evaluation_only",
-                "low_reward_usage": (
-                    "disabled" if fixed_low_rho_one else "evaluation_only"
-                ),
-                "high_updates_this_episode": 0,
-                "low_updates_this_episode": 0,
-                "high_lambda_updated_this_episode": False,
-                "low_lambda_updated_this_episode": False,
-                "checkpoint_selection_mode": (
-                    "feasible_energy_min"
-                    if checkpoint_deadline_target is not None
-                    else "deadline_lexicographic"
-                ),
-                "checkpoint_deadline_target": checkpoint_deadline_target,
-                "checkpoint_reliability_target": checkpoint_reliability_target,
-                "high_learning_rate": float(
-                    0.0
-                    if high_algorithm != "d3qn"
-                    else agent.high_agent.agent_R.optimizer.param_groups[0]["lr"]
-                ),
-                "low_learning_rate": (
-                    float(agent.low_agent.actor_optimizer.param_groups[0]["lr"])
-                    if _is_low_sac_agent(agent)
-                    else 0.0
-                ),
-                "high_deadline_lambda_current": float(
-                    agent.high_agent.deadline_lambda
-                ),
-                "low_deadline_lambda_current": (
-                    float(agent.low_agent.deadline_lambda)
-                    if _is_low_sac_agent(agent)
-                    else 0.0
-                ),
-                "high_algorithm": high_algorithm,
-                "constraint_handling": constraint_handling,
-                "deadline_lagrangian_mode": agent.deadline_lagrangian_mode,
-                "low_constraint_handling": (
-                    "shared_lagrangian_deadline"
-                    if agent.shared_deadline_lagrangian_enabled
-                    else "lagrangian_deadline"
-                    if _is_low_sac_agent(agent)
-                    and getattr(agent.low_agent, "deadline_lagrangian", None)
-                    is not None
-                    else "lagrangian_reliability"
-                    if _is_low_sac_agent(agent)
-                    and getattr(agent.low_agent, "reliability_lagrangian", None)
-                    is not None
-                    else "reward_only"
-                ),
-                "high_action_mask_mode": "structural_only",
-                "eval_seed": eval_seed,
-                "eval_episodes": int(training_cfg.get("eval_episodes", 5)),
-                **eval_metrics,
-            }
-            if getattr(agent.high_agent, "deadline_lagrangian", None) is not None:
-                eval_row["lambda_deadline"] = agent.high_agent.deadline_lambda
-            if (
-                _is_low_sac_agent(agent)
-                and getattr(agent.low_agent, "deadline_lagrangian", None) is not None
-            ):
-                eval_row["low_deadline_lambda"] = (
-                    agent.low_agent.deadline_lambda
+            validation_blocks = []
+            for block_index, eval_seed in enumerate(eval_seeds):
+                eval_metrics = evaluate_agent(
+                    config,
+                    resources,
+                    agent,
+                    objective,
+                    eval_seed,
+                    int(training_cfg.get("eval_episodes", 5)),
+                    smoke_test=smoke_test,
+                    fixed_low_rho_one=fixed_low_rho_one,
+                    high_algorithm=high_algorithm,
                 )
-            if agent.shared_deadline_lagrangian_enabled:
-                shared_state = agent.shared_deadline_lagrangian.state_dict()
-                shared_window = np.asarray(
-                    shared_state.get("workflow_cost_window", []),
-                    dtype=np.float64,
+                validation_blocks.append(eval_metrics)
+                eval_row = {
+                    "episode": episode,
+                    "validation_block_index": block_index,
+                    "validation_block_count": len(eval_seeds),
+                    "global_episode": global_episode,
+                    "phase_name": str(
+                        training_cfg.get("phase_name", "single_stage")
+                    ),
+                    "phase_index": int(training_cfg.get("phase_index", 1)),
+                    "phase_count": int(training_cfg.get("phase_count", 1)),
+                    "high_active_episode": (
+                        high_active_episode_offset + episode
+                        if high_algorithm == "d3qn" and not freeze_high
+                        else high_active_episode_offset
+                    ),
+                    "low_active_episode": (
+                        low_active_episode_offset + episode
+                        if not freeze_low and not fixed_low_rho_one
+                        else low_active_episode_offset
+                    ),
+                    "high_policy_status": (
+                        "fixed_heuristic_eval"
+                        if high_algorithm != "d3qn"
+                        else "evaluation_deterministic"
+                    ),
+                    "low_policy_status": (
+                        "fixed_rho1"
+                        if fixed_low_rho_one
+                        else "evaluation_deterministic"
+                    ),
+                    "high_reward_usage": "evaluation_only",
+                    "low_reward_usage": (
+                        "disabled" if fixed_low_rho_one else "evaluation_only"
+                    ),
+                    "high_updates_this_episode": 0,
+                    "low_updates_this_episode": 0,
+                    "high_lambda_updated_this_episode": False,
+                    "low_lambda_updated_this_episode": False,
+                    "checkpoint_selection_mode": (
+                        "esp_feasible_energy_min"
+                        if checkpoint_deadline_esp_threshold is not None
+                        else "feasible_energy_min"
+                        if checkpoint_deadline_target is not None
+                        else "deadline_lexicographic"
+                    ),
+                    "checkpoint_deadline_target": checkpoint_deadline_target,
+                    "checkpoint_reliability_target": checkpoint_reliability_target,
+                    "checkpoint_deadline_esp_threshold": (
+                        checkpoint_deadline_esp_threshold
+                    ),
+                    "checkpoint_deadline_esp_target": checkpoint_deadline_esp_target,
+                    "high_learning_rate": float(
+                        0.0
+                        if high_algorithm != "d3qn"
+                        else agent.high_agent.agent_R.optimizer.param_groups[0]["lr"]
+                    ),
+                    "low_learning_rate": (
+                        float(agent.low_agent.actor_optimizer.param_groups[0]["lr"])
+                        if _is_low_sac_agent(agent)
+                        else 0.0
+                    ),
+                    "high_deadline_lambda_current": float(
+                        agent.high_agent.deadline_lambda
+                    ),
+                    "low_deadline_lambda_current": (
+                        float(agent.low_agent.deadline_lambda)
+                        if _is_low_sac_agent(agent)
+                        else 0.0
+                    ),
+                    "high_algorithm": high_algorithm,
+                    "constraint_handling": constraint_handling,
+                    "deadline_lagrangian_mode": agent.deadline_lagrangian_mode,
+                    "low_constraint_handling": (
+                        "shared_lagrangian_deadline"
+                        if agent.shared_deadline_lagrangian_enabled
+                        else "lagrangian_deadline"
+                        if _is_low_sac_agent(agent)
+                        and getattr(agent.low_agent, "deadline_lagrangian", None)
+                        is not None
+                        else "lagrangian_reliability"
+                        if _is_low_sac_agent(agent)
+                        and getattr(agent.low_agent, "reliability_lagrangian", None)
+                        is not None
+                        else "reward_only"
+                    ),
+                    "high_action_mask_mode": "structural_only",
+                    "eval_seed": eval_seed,
+                    "eval_episodes": int(training_cfg.get("eval_episodes", 5)),
+                    **eval_metrics,
+                }
+                if getattr(agent.high_agent, "deadline_lagrangian", None) is not None:
+                    eval_row["lambda_deadline"] = agent.high_agent.deadline_lambda
+                if (
+                    _is_low_sac_agent(agent)
+                    and getattr(agent.low_agent, "deadline_lagrangian", None) is not None
+                ):
+                    eval_row["low_deadline_lambda"] = (
+                        agent.low_agent.deadline_lambda
+                    )
+                if agent.shared_deadline_lagrangian_enabled:
+                    shared_state = agent.shared_deadline_lagrangian.state_dict()
+                    shared_window = np.asarray(
+                        shared_state.get("workflow_cost_window", []),
+                        dtype=np.float64,
+                    )
+                    eval_row.update(
+                        {
+                            "shared_deadline_lambda": agent.high_agent.deadline_lambda,
+                            "shared_deadline_lambda_before_update": agent.high_agent.deadline_lambda,
+                            "shared_deadline_lambda_after_update": agent.high_agent.deadline_lambda,
+                            "shared_deadline_constraint_budget": float(
+                                shared_state["deadline_budget"]
+                            ),
+                            "shared_deadline_success_target": float(
+                                1.0 - shared_state["deadline_budget"]
+                            ),
+                            "shared_deadline_constraint_mean": (
+                                float(np.mean(shared_window))
+                                if shared_window.size
+                                else 0.0
+                            ),
+                            "shared_deadline_constraint_batch_mean": float(
+                                eval_metrics.get("deadline_miss_rate", 0.0)
+                            ),
+                            "shared_deadline_constraint_workflow_count": int(
+                                shared_window.size
+                            ),
+                            "shared_deadline_dual_updated": 0.0,
+                            "shared_deadline_dual_warmup_active": 0.0,
+                        }
+                    )
+                eval_history.append(eval_row)
+                append_history_row(output_dir, "eval_history", eval_row)
+                write_history_files(output_dir, "eval_history", eval_history, rewrite_jsonl=False)
+                print_d3qn_metrics_block("eval", eval_row)
+            checkpoint_metrics = combine_checkpoint_metrics(validation_blocks)
+            if len(validation_blocks) > 1:
+                print(
+                    f"[eval-pooled] ep={episode} "
+                    f"blocks={len(validation_blocks)} "
+                    f"{format_satisfaction_summary(checkpoint_metrics)} "
+                    f"E={float(checkpoint_metrics['total_energy']) / 1000:.2f}kJ",
+                    flush=True,
                 )
-                eval_row.update(
-                    {
-                        "shared_deadline_lambda": agent.high_agent.deadline_lambda,
-                        "shared_deadline_lambda_before_update": agent.high_agent.deadline_lambda,
-                        "shared_deadline_lambda_after_update": agent.high_agent.deadline_lambda,
-                        "shared_deadline_constraint_budget": float(
-                            shared_state["deadline_budget"]
-                        ),
-                        "shared_deadline_success_target": float(
-                            1.0 - shared_state["deadline_budget"]
-                        ),
-                        "shared_deadline_constraint_mean": (
-                            float(np.mean(shared_window))
-                            if shared_window.size
-                            else 0.0
-                        ),
-                        "shared_deadline_constraint_batch_mean": float(
-                            eval_metrics.get("deadline_miss_rate", 0.0)
-                        ),
-                        "shared_deadline_constraint_workflow_count": int(
-                            shared_window.size
-                        ),
-                        "shared_deadline_dual_updated": 0.0,
-                        "shared_deadline_dual_warmup_active": 0.0,
-                    }
-                )
-            eval_history.append(eval_row)
-            append_history_row(output_dir, "eval_history", eval_row)
-            write_history_files(output_dir, "eval_history", eval_history, rewrite_jsonl=False)
-            print_d3qn_metrics_block("eval", eval_row)
-            if best_metrics is None or metric_rank(
-                eval_metrics,
+            candidate_rank = metric_rank(
+                checkpoint_metrics,
                 deadline_target=checkpoint_deadline_target,
                 reliability_target=checkpoint_reliability_target,
-            ) > metric_rank(
+                deadline_esp_threshold=checkpoint_deadline_esp_threshold,
+                deadline_esp_target=checkpoint_deadline_esp_target,
+            )
+            best_rank = None if best_metrics is None else metric_rank(
                 best_metrics,
                 deadline_target=checkpoint_deadline_target,
                 reliability_target=checkpoint_reliability_target,
+                deadline_esp_threshold=checkpoint_deadline_esp_threshold,
+                deadline_esp_target=checkpoint_deadline_esp_target,
+            )
+            candidate_is_officially_feasible = (
+                checkpoint_deadline_esp_threshold is None or candidate_rank[0] >= 1.0
+            )
+            if candidate_is_officially_feasible and (
+                best_rank is None or candidate_rank > best_rank
             ):
-                best_metrics = eval_metrics
+                best_metrics = checkpoint_metrics
                 agent.save_checkpoint(
                     output_dir / f"best_{high_algorithm}_checkpoint.pt",
                     objective_state=objective.state_dict(),

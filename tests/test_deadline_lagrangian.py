@@ -25,6 +25,7 @@ from tools.train_hierarchical_d3qn import (
     _apply_cooperative_workflow_credit,
     _cumulative_low_deadline_credit,
     _low_causal_deadline_misses,
+    _workflow_counterfactual_low_deadline_credit,
 )
 
 
@@ -117,6 +118,103 @@ class TestDeadlineLagrangian(unittest.TestCase):
         self.assertAlmostEqual(
             details["upper_caused"]["counterfactual_response_time"], 120.0
         )
+
+    def test_workflow_counterfactual_credit_measures_removable_overrun(self):
+        results = [
+            {
+                "workflow_id": "crossing",
+                "response_time": 110.0,
+                "relative_deadline": 100.0,
+            },
+            {
+                "workflow_id": "still_late",
+                "response_time": 130.0,
+                "relative_deadline": 100.0,
+            },
+        ]
+        transitions = [
+            {
+                "workflow_id": "crossing",
+                "reward_components": {"time_increase_seconds": 4.0},
+            },
+            {
+                "workflow_id": "crossing",
+                "reward_components": {"time_increase_seconds": 8.0},
+            },
+            {
+                "workflow_id": "still_late",
+                "reward_components": {"time_increase_seconds": 5.0},
+            },
+        ]
+
+        costs, dual_costs, details = _workflow_counterfactual_low_deadline_credit(
+            results, transitions
+        )
+
+        self.assertAlmostEqual(costs[0], 0.1)
+        self.assertAlmostEqual(costs[1], 0.05)
+        self.assertEqual(costs, dual_costs)
+        self.assertEqual(details["crossing"]["responsible_crossing"], 1.0)
+        self.assertEqual(details["still_late"]["responsible_crossing"], 0.0)
+
+    def test_workflow_counterfactual_credit_captures_queue_externality(self):
+        def task_plan(workflow_id, ast, aft, exec_time, rho):
+            return {
+                "workflow_id": workflow_id,
+                "task_id": 0,
+                "parents": [],
+                "parent_transfer_times_primary": {},
+                "primary_server": 0,
+                "primary_ast": ast,
+                "primary_aft": aft,
+                "primary_exec_time": exec_time,
+                "primary_rho": rho,
+                "current_time": 0.0,
+            }
+
+        results = [
+            {
+                "workflow_id": "source",
+                "arrival_time": 0.0,
+                "finish_time": 10.0,
+                "compute_finish_time": 10.0,
+                "response_time": 10.0,
+                "relative_deadline": 100.0,
+                "task_plans": [task_plan("source", 0.0, 10.0, 10.0, 0.5)],
+            },
+            {
+                "workflow_id": "victim",
+                "arrival_time": 0.0,
+                "finish_time": 11.0,
+                "compute_finish_time": 11.0,
+                "response_time": 11.0,
+                "relative_deadline": 8.0,
+                "task_plans": [task_plan("victim", 10.0, 11.0, 1.0, 1.0)],
+            },
+        ]
+        transitions = [
+            {
+                "workflow_id": "source",
+                "reward_components": {"time_increase_seconds": 5.0},
+            },
+            {
+                "workflow_id": "victim",
+                "reward_components": {"time_increase_seconds": 0.0},
+            },
+        ]
+
+        replay_costs, dual_costs, details = (
+            _workflow_counterfactual_low_deadline_credit(results, transitions)
+        )
+
+        self.assertAlmostEqual(replay_costs[0], 0.375)
+        self.assertAlmostEqual(replay_costs[1], 0.0)
+        self.assertAlmostEqual(dual_costs[0], 0.0)
+        self.assertAlmostEqual(dual_costs[1], 0.375)
+        self.assertAlmostEqual(
+            details["source"]["external_responsible_cost"], 0.375
+        )
+        self.assertEqual(details["source"]["affected_workflow_count"], 1)
 
     def controller(self, **overrides):
         values = {

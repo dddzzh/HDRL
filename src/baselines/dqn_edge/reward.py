@@ -116,25 +116,71 @@ class DQNEdgeCommonReward(DQNEdgePaperReward):
     def __init__(self, objective_config=None):
         super().__init__()
         values = dict(objective_config or {})
-        values.setdefault("reward_mode", "lagrangian_deadline")
-        values.setdefault("reward_profile", "ep740_lagrangian_v1")
+        # DQN-Edge is a fixed-reward comparison method.  Its time and energy
+        # heads learn two separate normalized objectives; it must not inherit
+        # the proposed method's adaptive Lagrangian replay fields.
+        values.setdefault("reward_mode", "deadline_incremental_only")
         self.objective = HierarchicalObjective(values)
+        self.fixed_reliability_lambda = float(
+            values.get("fixed_reliability_lambda", 0.0)
+        )
+        if self.fixed_reliability_lambda < 0.0:
+            raise ValueError("DQN-Edge fixed reliability lambda must be non-negative.")
 
     def reset_episode(self):
         super().reset_episode()
         self.objective.reset_episode()
 
     def split_feedback(self, feedback):
+        normalized_time_cost = max(
+            0.0, float(feedback["normalized_makespan_increment"])
+        )
+        violation_delta = max(
+            0.0, float(feedback.get("high_deadline_violation_delta", 0.0))
+        )
+        deadline_penalty = (
+            float(self.objective.deadline_incremental_violation_weight)
+            * violation_delta
+        )
+        reliability_violation_delta = max(
+            0.0, float(feedback.get("reliability_violation_delta", 0.0))
+        )
+        reliability_penalty = (
+            self.fixed_reliability_lambda * reliability_violation_delta
+        )
+        deadline_cost = (
+            float(self.objective.fixed_deadline_lambda) * normalized_time_cost
+        )
+        time_reward = -deadline_cost - deadline_penalty - reliability_penalty
+
+        energy_scale = max(float(feedback["task_energy_scale"]), EPS)
+        energy_actual = float(feedback["primary_energy_actual"])
+        workflow_task_count = max(
+            1.0, float(feedback["workflow_task_count"])
+        )
+        energy_saving_ratio = (energy_scale - energy_actual) / energy_scale
+        energy_reward = (
+            float(self.objective.high_energy_weight)
+            * energy_saving_ratio
+            / workflow_task_count
+        )
         components = {
             "version": "dqn_edge_ep740_upper_components_v1",
-            "time_reward": -float(feedback["high_deadline_constraint_cost"]),
-            "energy_reward": float(feedback["high_base_energy_reward"]),
-            "deadline_constraint_cost": float(
-                feedback["high_deadline_constraint_cost"]
-            ),
-            "energy_reference": float(feedback["task_energy_scale"]),
-            "energy_actual": float(feedback["primary_energy_actual"]),
-            "workflow_task_count": float(feedback["workflow_task_count"]),
+            "reward": float(time_reward + energy_reward),
+            "time_reward": float(time_reward),
+            "energy_reward": float(energy_reward),
+            "normalized_makespan_increment": float(normalized_time_cost),
+            "fixed_deadline_lambda": float(self.objective.fixed_deadline_lambda),
+            "fixed_deadline_cost": float(deadline_cost),
+            "deadline_violation_delta": float(violation_delta),
+            "deadline_penalty": float(deadline_penalty),
+            "reliability_violation_delta": float(reliability_violation_delta),
+            "reliability_penalty": float(reliability_penalty),
+            "fixed_reliability_lambda": float(self.fixed_reliability_lambda),
+            "energy_saving_ratio": float(energy_saving_ratio),
+            "energy_reference": float(energy_scale),
+            "energy_actual": float(energy_actual),
+            "workflow_task_count": float(workflow_task_count),
             "source_reward_mode": str(feedback.get("high_reward_mode", "")),
         }
         return (

@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from src.shared.hierarchical_state_reward import (
     FIXED_LAMBDA_UPPER_REWARD_VERSION,
     compose_fixed_lambda_upper_reward,
-    low_reliability_counterfactual_cost,
 )
 
 
@@ -75,6 +74,7 @@ class SharedWorkflowReward(DReaMRewardFunction):
             energy_scale=float(feedback["task_energy_scale"]),
             energy_actual=float(feedback["primary_energy_actual"]),
             workflow_task_count=float(feedback["workflow_task_count"]),
+            energy_weight=self.objective.high_energy_weight,
             fixed_deadline_lambda=self.objective.fixed_deadline_lambda,
             fixed_deadline_miss_penalty=(
                 getattr(
@@ -85,26 +85,16 @@ class SharedWorkflowReward(DReaMRewardFunction):
             ),
         )
         reliability = {
-            "reference_reliability_violation": 0.0,
-            "actual_reliability_violation": 0.0,
-            "reliability_violation_delta": 0.0,
-            "reliability_crossed": 0.0,
+            "reliability_violation": float(
+                feedback.get("reliability_violation", 0.0)
+            ),
+            "reliability_violation_delta": float(
+                feedback.get("reliability_violation_delta", 0.0)
+            ),
+            "reliability_crossed": float(
+                feedback.get("reliability_crossed", 0.0)
+            ),
         }
-        reference = transition_info.get("rho1_reference_metrics")
-        event = dict(transition_info["environment_info"].get("event", {}))
-        if env is not None and reference is not None:
-            workflow_state = env.workflow_by_id[
-                str(transition_info["env_action"]["workflow_id"])
-            ]
-            reliability = low_reliability_counterfactual_cost(
-                env,
-                workflow_state,
-                int(transition_info["env_action"]["task_id"]),
-                float(reference["final_reliability"]),
-                float(event.get(
-                    "final_reliability", reference["final_reliability"]
-                )),
-            )
         reliability_penalty = (
             self.fixed_reliability_lambda
             * reliability["reliability_violation_delta"]
@@ -148,7 +138,7 @@ class SharedWorkflowReward(DReaMRewardFunction):
             "source": (
                 components["version"]
                 if self.fixed_reliability_lambda == 0.0
-                else f"{components['version']}+low_reliability_v1"
+                else f"{components['version']}+workflow_reliability_v2"
             ),
             "components": components,
             "feedback": feedback,

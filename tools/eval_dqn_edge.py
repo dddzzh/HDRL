@@ -17,14 +17,30 @@ if str(PROJECT_ROOT) not in sys.path:
 import torch
 
 from src.baselines.dqn_edge import DQNEdgeConfig
-from tools.hierarchical_common import build_env, build_resources, build_workflows, load_json
+from tools.hierarchical_common import (
+    DEADLINE_TYPES,
+    apply_deadline_type,
+    build_env,
+    build_resources,
+    build_workflows,
+    load_json,
+)
 from tools.train_dqn_edge import build_dqn_edge_runtime, run_episode
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a trained DQN-Edge checkpoint.")
     parser.add_argument("checkpoint")
-    parser.add_argument("--config", default="configs/dqn_edge.json")
+    parser.add_argument("--config", default="configs/dqn_edge_small_20edge_6cloud.json")
+    parser.add_argument(
+        "--deadline-type",
+        choices=DEADLINE_TYPES,
+        default=None,
+        help=(
+            "Deadline regime to evaluate under (tight=P(2x)=0.8, medium=0.5, "
+            "loose=0.2). Defaults to the config value."
+        ),
+    )
     parser.add_argument("--seed-start", type=int, default=242000)
     parser.add_argument("--num-seeds", type=int, default=20)
     parser.add_argument("--device", default="cpu")
@@ -79,6 +95,7 @@ def evaluate(config, args):
               "checkpoint": str(Path(args.checkpoint).resolve()),
               "resource_seed": resource_seed, "workflow_seed_start": args.seed_start,
               "num_seeds": count, "rho": 1.0, "backup_duplication": False,
+              "deadline_type": config.get("simulation", {}).get("deadline_type", "medium"),
               "aggregate": aggregate, "rows": rows}
     output = Path(args.output) if args.output else Path(args.checkpoint).resolve().parent / "evaluation.json"
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -87,7 +104,8 @@ def evaluate(config, args):
 
 
 def main():
-    args = parse_args(); evaluate(load_json(args.config), args)
+    args = parse_args()
+    evaluate(apply_deadline_type(load_json(args.config), args.deadline_type), args)
 
 
 if __name__ == "__main__":

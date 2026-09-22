@@ -16,6 +16,7 @@ class DReaMConfig:
     epsilon_min: float = 0.01
     epsilon_decay: float = 0.9999
     target_update_frequency: int = 50
+    training_per_episode: int = 1
     training_episodes: int = 100000
     max_grad_norm: float = 1.0
     huber_delta: float = 1.0
@@ -32,7 +33,11 @@ class DReaMConfig:
             raise ValueError("Invalid DReaM gamma or learning rate.")
         if not 0.0 <= self.epsilon_min <= self.epsilon_start <= 1.0:
             raise ValueError("Invalid DReaM epsilon range.")
-        if not 0.0 < self.epsilon_decay <= 1.0 or self.target_update_frequency <= 0:
+        if (
+            not 0.0 < self.epsilon_decay <= 1.0
+            or self.target_update_frequency <= 0
+            or self.training_per_episode <= 0
+        ):
             raise ValueError("Invalid DReaM decay/update frequency.")
         if self.max_grad_norm <= 0.0 or self.huber_delta <= 0.0:
             raise ValueError("DReaM gradient norm and Huber delta must be positive.")

@@ -141,6 +141,27 @@ class DualHeadD3QNTests(unittest.TestCase):
         self.assertTrue(np.allclose(energy, [1.0, 0.8]))
         self.assertTrue(np.allclose(deadline, [0.5, 0.0]))
 
+    def test_nonnegative_deadline_q_cannot_become_action_bonus(self):
+        learner = DualHeadConstrainedD3QN(
+            state_dim=2,
+            action_dim=2,
+            hidden_dim=4,
+            hidden_layers=1,
+            replay_size=8,
+            batch_size=2,
+            nonnegative_deadline_q=True,
+            device="cpu",
+        )
+        learner.action_q_values = lambda _state: (
+            np.asarray([0.2, 0.1]),
+            np.asarray([-1.0, 0.0]),
+        )
+        combined, _, deadline = learner.combined_action_q_values(
+            np.zeros(2), deadline_lambda=6.0
+        )
+        self.assertTrue(np.all(deadline >= 0.0))
+        self.assertTrue(np.allclose(combined, [0.2, 0.1]))
+
 
 if __name__ == "__main__":
     unittest.main()

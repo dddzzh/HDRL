@@ -61,6 +61,12 @@ def parse_args():
     parser.add_argument("--num-seeds", type=int, default=20)
     parser.add_argument("--output", default=None)
     parser.add_argument(
+        "--deadline-type",
+        choices=("tight", "medium", "loose"),
+        default=None,
+        help="Override the checkpoint's deadline stringency for evaluation only.",
+    )
+    parser.add_argument(
         "--use-low-sac",
         action="store_true",
         help="Use the lower SAC stored in the combined checkpoint instead of fixed rho=1.",
@@ -70,6 +76,11 @@ def parse_args():
         type=float,
         default=None,
         help="Evaluation-only lower bound applied to deterministic SAC rho.",
+    )
+    parser.add_argument(
+        "--enforce-rho-safe",
+        action="store_true",
+        help="Evaluation-only: clamp deterministic SAC rho to the per-task rho_safe.",
     )
     return parser.parse_args()
 
@@ -100,6 +111,8 @@ def main():
     config = copy.deepcopy(payload.get("config") or {})
     if not config:
         raise RuntimeError("Checkpoint does not contain its training configuration.")
+    if args.deadline_type is not None:
+        config.setdefault("simulation", {})["deadline_type"] = args.deadline_type
     agent_config = configure_agent_state(
         config,
         build_resources(config, int(config.get("training", {}).get("seed", 42))),
@@ -117,17 +130,23 @@ def main():
     else:
         agent = DualHeadHierarchicalD3QNAgent(agent_config, seed=args.seed_start)
     agent.load_checkpoint(checkpoint)
-    if args.rho_floor is not None:
+    if args.rho_floor is not None or args.enforce_rho_safe:
         if not args.use_low_sac:
-            raise ValueError("--rho-floor requires --use-low-sac.")
+            raise ValueError("DVFS evaluation floors require --use-low-sac.")
+    if args.rho_floor is not None:
         rho_floor = float(args.rho_floor)
         if not 0.0 < rho_floor <= 1.0:
             raise ValueError("--rho-floor must be in (0, 1].")
+    if args.rho_floor is not None or args.enforce_rho_safe:
         original_select_frequency = agent.low_agent.select_frequency
 
         def select_frequency_with_floor(*select_args, **select_kwargs):
             decision = dict(original_select_frequency(*select_args, **select_kwargs))
-            rho = max(rho_floor, float(decision["rho"]))
+            rho = float(decision["rho"])
+            if args.rho_floor is not None:
+                rho = max(float(args.rho_floor), rho)
+            if args.enforce_rho_safe:
+                rho = max(float(decision.get("rho_safe", rho)), rho)
             decision["rho"] = rho
             decision["action_rho"] = rho
             decision["action_u"] = rho
@@ -186,6 +205,8 @@ def main():
         "fixed_low_rho_one": not args.use_low_sac,
         "low_agent_used": bool(args.use_low_sac),
         "evaluation_rho_floor": args.rho_floor,
+        "evaluation_enforce_rho_safe": bool(args.enforce_rho_safe),
+        "deadline_type": config.get("simulation", {}).get("deadline_type", "medium"),
         "seed_start": args.seed_start,
         "seed_end": args.seed_start + args.num_seeds - 1,
         "rows": rows,

@@ -11,7 +11,7 @@ from src.simulator.resource import compute_execution_time
 TASK_FEATURE_DIM = 3
 SERVER_FEATURE_DIM = 21
 GLOBAL_FEATURE_DIM = 5
-LOW_STATE_FEATURE_DIM = 9
+LOW_STATE_FEATURE_DIM = 11
 EPS = 1e-8
 
 
@@ -449,6 +449,16 @@ class HierarchicalStateEncoder:
             workflow_absolute_deadline - estimated_ast,
         )
         rho_safe = safe_float(safety_metrics.get("rho_safe", server.get("min_rho", 0.1)), 0.1)
+        global_critical_pressure = np.clip(
+            safe_float(safety_metrics.get("global_critical_pressure", 0.0)),
+            0.0,
+            1.0,
+        )
+        worst_critical_pressure = np.clip(
+            safe_float(safety_metrics.get("worst_critical_pressure", 0.0)),
+            0.0,
+            1.0,
+        )
         workload = safe_float(task.get("workload_cycles", 0.0))
 
         return np.array(
@@ -462,6 +472,8 @@ class HierarchicalStateEncoder:
                 np.tanh(static_power / 100.0),
                 np.tanh(dynamic_power / 250.0),
                 reliability_req,
+                global_critical_pressure,
+                worst_critical_pressure,
             ],
             dtype=np.float32,
         )

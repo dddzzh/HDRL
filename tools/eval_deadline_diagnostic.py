@@ -58,6 +58,11 @@ def parse_args():
     parser.add_argument("--seed-start", type=int, default=242000)
     parser.add_argument("--num-seeds", type=int, default=20)
     parser.add_argument(
+        "--deadline-type",
+        choices=("tight", "medium", "loose"),
+        default=None,
+    )
+    parser.add_argument(
         "--dataset-scale",
         choices=("small", "medium", "large"),
         default="small",
@@ -194,6 +199,8 @@ def main():
     config = copy.deepcopy(payload.get("config") or {})
     if not config:
         raise RuntimeError("Checkpoint does not contain its training configuration.")
+    if args.deadline_type is not None:
+        config.setdefault("simulation", {})["deadline_type"] = args.deadline_type
     generator_cfg = config.setdefault("generator", {})
     if args.dataset_source == "alibaba_json":
         generator_cfg["type"] = "alibaba_json"
@@ -215,7 +222,17 @@ def main():
         resources = build_resources(config, server_seed)
     agent_config = configure_agent_state(config, resources, smoke_test=False)
     agent_config["use_low_agent"] = True
-    agent = HierarchicalD3QNAgent(agent_config, seed=args.seed_start)
+    saved_high = dict(payload.get("dual_head_state_dict") or {})
+    if "reliability_q_eval" in saved_high:
+        from tools.train_reliability_aware_hierarchical_d3qn import (
+            ReliabilityAwareHierarchicalD3QNAgent,
+        )
+
+        agent = ReliabilityAwareHierarchicalD3QNAgent(
+            agent_config, seed=args.seed_start
+        )
+    else:
+        agent = HierarchicalD3QNAgent(agent_config, seed=args.seed_start)
     agent.load_checkpoint(checkpoint_path)
     agent.high_agent.epsilon = 0.0
     objective = HierarchicalObjective(config.get("objective", {}))

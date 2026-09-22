@@ -37,14 +37,17 @@ def test_all_joint_actions_round_trip_and_rho():
             if not ft: assert d.ft_index is None and d.ft_technique is None
 
 
-def test_target_initial_and_environment_step_update():
-    agent = DReaMAgent(6, 14, small_config())
+def test_target_initial_and_gradient_step_update():
+    agent = DReaMAgent(6, 14, small_config(target_update_frequency=2))
     before = {k: v.clone() for k, v in agent.target_net.state_dict().items()}
     assert all(torch.equal(v, agent.online_net.state_dict()[k]) for k, v in before.items())
     with torch.no_grad(): next(agent.online_net.parameters()).add_(1.0)
-    for _ in range(49): assert not agent.after_environment_step()
+    for _ in range(2): assert not agent.after_environment_step()
     assert all(torch.equal(v, agent.target_net.state_dict()[k]) for k, v in before.items())
-    assert agent.after_environment_step()
+    for i in range(4):
+        agent.replay_buffer.add(np.ones(6) * i, i % 14, 1.0, np.ones(6), False)
+    assert not agent.update()["target_updated"]
+    assert agent.update()["target_updated"]
     assert all(torch.equal(v, agent.online_net.state_dict()[k]) for k, v in agent.target_net.state_dict().items())
 
 
@@ -100,7 +103,7 @@ def test_dream_reward_matches_common_fixed_lambda_formula():
     class StubObjective:
         reward_mode = "deadline_incremental_only"
         fixed_deadline_lambda = 10.0
-        high_energy_weight = 1.0
+        high_energy_weight = 3.0
 
         def compute_step_feedback(self, *args, **kwargs):
             return {
@@ -110,9 +113,14 @@ def test_dream_reward_matches_common_fixed_lambda_formula():
                 "primary_energy_actual": 70.0,
                 "task_energy_scale": 100.0,
                 "workflow_task_count": 10.0,
+                "reliability_violation": 0.2,
+                "reliability_violation_delta": 0.2,
+                "reliability_crossed": 1.0,
             }
 
-    reward, info = SharedWorkflowReward(StubObjective()).compute_reward(
+    reward, info = SharedWorkflowReward(
+        StubObjective(), fixed_reliability_lambda=10.0
+    ).compute_reward(
         env=None,
         task=None,
         workflow=None,
@@ -130,8 +138,12 @@ def test_dream_reward_matches_common_fixed_lambda_formula():
         },
     )
 
-    # ((100 - 70) / 100) / 10 - 10 * 0.2
-    assert reward == pytest.approx(-1.97)
-    assert info["source"] == FIXED_LAMBDA_UPPER_REWARD_VERSION
+    # 3 * ((100 - 70) / 100) / 10 - 10 * 0.2 - 10 * 0.2
+    assert reward == pytest.approx(-3.91)
+    assert info["source"] == (
+        f"{FIXED_LAMBDA_UPPER_REWARD_VERSION}+workflow_reliability_v2"
+    )
     assert info["components"]["energy_saving"] == pytest.approx(30.0)
+    assert info["components"]["energy_weight"] == pytest.approx(3.0)
+    assert info["components"]["reliability_violation_delta"] == pytest.approx(0.2)
     assert info["feedback"]["high_reward"] == pytest.approx(reward)

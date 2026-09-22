@@ -1,0 +1,45 @@
+{
+  "generator": {"num_workflows": 20, "dataset_scale": "small", "arrival_process": "cai_2025_exponential", "arrival_rate": 0.1},
+  "resources": {"path": "configs/resources_edge_cloud_dvfs_v3.json", "num_edge": 20, "num_cloud": 6},
+  "simulation": {
+    "ready_task_order": "smallest_workload",
+    "deadline_type": "medium",
+    "workflow_reliability_requirement": 0.9,
+    "default_rho": 1.0,
+    "rho_min": 0.2,
+    "energy_eta": 0.5,
+    "default_reliability": 0.95,
+    "reliability_exponent": 3.0,
+    "enable_backup_duplication": false,
+    "remaining_task_reliability_estimate": 0.999,
+    "server_history_ema_alpha": 0.9,
+    "dvfs_action_floor": "energy_efficient"
+  },
+  "agent": {
+    "algorithm": "adapted_dqn_edge",
+    "variant": "common_upper",
+    "shared": {"state": {"max_ready_tasks": 32, "max_servers": 26}},
+    "dqn_edge": {
+      "hidden_dim": 64,
+      "hidden_layers": 2,
+      "attention_hidden_dim": 32,
+      "learning_rate": 0.00005,
+      "attention_learning_rate": 0.00005,
+      "gamma": 0.9,
+      "batch_size": 128,
+      "replay_capacity": 50000,
+      "epsilon_start": 0.3,
+      "epsilon_min": 0.05,
+      "epsilon_decay_per_step": 0.000001,
+      "target_update_frequency": 100,
+      "training_episodes": 1500,
+      "rank_critical_beta": 1.0,
+      "attention_ema_alpha": 0.1,
+      "max_grad_norm": 10.0,
+      "seed": 42,
+      "device": "cuda"
+    }
+  },
+  "objective": {"reward_mode": "deadline_incremental_only", "deadline_violation_weight": 5.0, "fixed_deadline_lambda": 10.0, "fixed_reliability_lambda": 1.0, "high_energy_weight": 3.0},
+  "training": {"seed": 42, "total_episodes": 1500, "torch_cpu_threads": 1, "eval_interval": 50, "eval_episodes": 20, "eval_seed": 542000, "eval_seed_secondary": 642000, "checkpoint_deadline_esp_threshold": 0.90, "checkpoint_deadline_esp_target": 0.90, "checkpoint_reliability_target": 1.0, "save_every": 50, "checkpoint_dir": "results/dqn_edge_small_20edge_6cloud"}
+}

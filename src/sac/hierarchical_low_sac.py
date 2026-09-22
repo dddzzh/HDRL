@@ -757,9 +757,15 @@ class LowLevelDVFSContinuousSACAgent:
                     ).item()
                 )
             # The SAC action is the actual normalized DVFS frequency rho.
-            # A final clip only enforces a server-specific hardware minimum.
-            rho = float(action_tensor.item())
-            rho = float(min(1.0, max(rho_hardware_min, rho)))
+            # A final clip only enforces the server-specific action floor.
+            rho_raw = float(action_tensor.item())
+            rho = float(min(1.0, max(rho_hardware_min, rho_raw)))
+            # The actor's log-prob refers to rho_raw while the environment executes
+            # the clipped rho, so a high binding rate means the actor is being
+            # rewarded for a frequency it never runs at.  Track it: if this stays
+            # small the clip is a harmless guardrail, if it grows the action needs
+            # a per-server affine map instead of a clip.
+            rho_floor_binding = float(rho_raw < rho_hardware_min - 1e-9)
             action_rho = rho
             log_prob_value = float(log_prob.item())
             entropy_value = -log_prob_value
@@ -769,6 +775,7 @@ class LowLevelDVFSContinuousSACAgent:
         else:
             action_rho = 1.0
             rho = 1.0
+            rho_floor_binding = 0.0
             log_prob_value = 0.0
             entropy_value = 0.0
             value = 0.0
@@ -794,6 +801,10 @@ class LowLevelDVFSContinuousSACAgent:
             "policy_log_std": policy_log_std,
             "rho_safe": float(rho_safe),
             "rho_hardware_min": float(rho_hardware_min),
+            "rho_energy_efficient": float(
+                safety_metrics.get("rho_energy_efficient", rho_hardware_min)
+            ),
+            "rho_floor_binding": float(rho_floor_binding),
             "low_action_feasible": low_action_feasible,
             "has_action_span": has_action_span,
             "actor_update_mask": actor_update_mask,

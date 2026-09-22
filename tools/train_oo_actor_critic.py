@@ -29,6 +29,7 @@ from src.D3QN.reward import HierarchicalObjective
 from src.device_utils import configure_torch_runtime, describe_device
 from src.ppo.hierarchical_rollout import HighRolloutBuffer, LowRolloutBuffer
 from src.simulator.metrics import compute_summary
+from src.simulator.resource import map_discrete_rho_to_server_range
 from src.shared.hierarchical_state_reward import (
     FIXED_LAMBDA_UPPER_REWARD_VERSION,
     SHARED_REWARD_VERSION,
@@ -42,11 +43,14 @@ from tools.hierarchical_common import (
     _assert_metrics_finite,
     _patch_terminal,
     append_history_row,
+    attach_satisfaction_metrics,
     average_metrics,
     build_env,
     build_episode_metrics_from_buffers,
     build_resources,
     build_workflows,
+    checkpoint_validation_seeds,
+    combine_checkpoint_metrics,
     completed_workflows,
     configure_agent_state,
     initialize_history_files,
@@ -54,6 +58,7 @@ from tools.hierarchical_common import (
     metric_rank,
     print_metrics_block,
     validate_training_config,
+    write_checkpoint_selection,
     write_history_files,
 )
 
@@ -62,7 +67,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Train the adapted ordinal-optimization actor-critic baseline."
     )
-    parser.add_argument("--config", default="configs/oo_actor_critic.json")
+    parser.add_argument("--config", default="configs/oo_actor_critic_small_20edge_6cloud.json")
     parser.add_argument("--episodes", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--smoke-test", action="store_true")
@@ -227,12 +232,15 @@ def collect_oo_episode(
             key = (int(server_index), int(frequency_index))
             if key not in candidate_cache:
                 server_id = int(observation.servers[key[0]]["id"])
+                mapped_rho = map_discrete_rho_to_server_range(
+                    observation.servers[key[0]], agent.rho_levels, key[1]
+                )
                 candidate_cache[key] = evaluate_upper_reward_candidate(
                     env,
                     objective,
                     state,
                     server_id=server_id,
-                    rho=agent.rho_levels[key[1]],
+                    rho=mapped_rho,
                     deadline_cost_reward_weight=deadline_cost_reward_weight,
                     energy_reward_weight=agent.energy_reward_weight,
                     energy_statistics=energy_statistics,
@@ -256,6 +264,7 @@ def collect_oo_episode(
         if selected_key not in candidate_cache:
             exact_score(*selected_key)
         selected_prediction = candidate_cache[selected_key]
+        decision["rho"] = float(selected_prediction["rho"])
         env_action = {
             "workflow_id": high_decision["workflow_id"],
             "task_id": high_decision["task_id"],
@@ -665,11 +674,16 @@ def evaluate_agent(
             deadline_cost_reward_weight=deadline_cost_reward_weight,
         )
         rows.append(result["metrics"])
-    return average_metrics(rows)
+    return attach_satisfaction_metrics(average_metrics(rows), rows)
 
 
 def _print_oo_metrics(label, row):
-    print_metrics_block(label, row)
+    print_metrics_block(
+        label,
+        row,
+        include_deadline_success_rate=False,
+        satisfaction_target_only=True,
+    )
     pairs = (
         ("oo_replay_size", "replay"),
         ("oo_updates", "updates"),
@@ -805,6 +819,7 @@ def run_training(config, *, smoke_test=False, episodes_override=None, seed_overr
         "[device] "
         f"oo_actor_critic={describe_device(agent.device)} "
         f"joint_action=server_x_{len(agent.rho_levels)}rho "
+        "rho_mapping=[server_rho_ee,1] "
         f"bits={agent.server_bits}+{agent.frequency_bits} "
         f"candidates={agent.num_candidates} top_s={agent.top_s} "
         f"state={state_version} reward={reward_description} "
@@ -833,8 +848,35 @@ def run_training(config, *, smoke_test=False, episodes_override=None, seed_overr
     eval_history = []
     best_metrics = None
     update_episode_count = 0
-    eval_seed = int(training_cfg.get("eval_seed", seed + 100000))
+    eval_seeds = checkpoint_validation_seeds(training_cfg, seed + 100000)
+    checkpoint_deadline_target = training_cfg.get("checkpoint_deadline_target")
+    if checkpoint_deadline_target is not None:
+        checkpoint_deadline_target = float(checkpoint_deadline_target)
+    checkpoint_reliability_target = float(
+        training_cfg.get("checkpoint_reliability_target", 1.0)
+    )
+    checkpoint_deadline_esp_threshold = training_cfg.get(
+        "checkpoint_deadline_esp_threshold"
+    )
+    checkpoint_deadline_esp_target = training_cfg.get(
+        "checkpoint_deadline_esp_target"
+    )
+    if checkpoint_deadline_esp_threshold is not None:
+        checkpoint_deadline_esp_threshold = float(
+            checkpoint_deadline_esp_threshold
+        )
+    if checkpoint_deadline_esp_target is not None:
+        checkpoint_deadline_esp_target = float(checkpoint_deadline_esp_target)
     save_replay = bool(training_cfg.get("save_replay_buffer", False))
+    checkpoint_policy = {
+        "mode": "all_blocks_esp_feasible_then_min_mean_energy",
+        "reliability_target": checkpoint_reliability_target,
+        "deadline_esp_threshold": checkpoint_deadline_esp_threshold,
+        "deadline_esp_target": checkpoint_deadline_esp_target,
+        "eval_seeds": eval_seeds,
+    }
+    if checkpoint_deadline_target is not None:
+        checkpoint_policy["deadline_target"] = checkpoint_deadline_target
 
     for episode in range(1, total_episodes + 1):
         episode_seed = seed + episode
@@ -899,35 +941,57 @@ def run_training(config, *, smoke_test=False, episodes_override=None, seed_overr
 
         eval_interval = int(training_cfg.get("eval_interval", 20))
         if eval_interval > 0 and episode % eval_interval == 0:
-            eval_metrics = evaluate_agent(
-                config,
-                resources,
-                encoder,
-                agent,
-                objective,
-                seed=eval_seed,
-                eval_episodes=int(training_cfg.get("eval_episodes", 10)),
-                smoke_test=smoke_test,
-                deadline_cost_reward_weight=deadline_cost_reward_weight,
-            )
-            eval_row = {
-                "episode": episode,
-                "algorithm": "adapted_oo_actor_critic",
-                "training_mode": "oo_joint_server_frequency_eval",
-                "constraint_handling": "reward_only",
-                "high_action_mask_mode": "structural_only",
-                "eval_seed": eval_seed,
-                "eval_episodes": int(training_cfg.get("eval_episodes", 10)),
-                **eval_metrics,
-            }
-            eval_history.append(eval_row)
-            append_history_row(output_dir, "eval_history", eval_row)
+            validation_blocks = []
+            eval_rows = []
+            for eval_seed in eval_seeds:
+                eval_metrics = evaluate_agent(
+                    config,
+                    resources,
+                    encoder,
+                    agent,
+                    objective,
+                    seed=eval_seed,
+                    eval_episodes=int(training_cfg.get("eval_episodes", 10)),
+                    smoke_test=smoke_test,
+                    deadline_cost_reward_weight=deadline_cost_reward_weight,
+                )
+                eval_row = {
+                    "episode": episode,
+                    "algorithm": "adapted_oo_actor_critic",
+                    "training_mode": "oo_joint_server_frequency_eval",
+                    "constraint_handling": "reward_only",
+                    "high_action_mask_mode": "structural_only",
+                    "eval_seed": eval_seed,
+                    "eval_episodes": int(training_cfg.get("eval_episodes", 10)),
+                    **eval_metrics,
+                }
+                eval_rows.append(eval_row)
+                validation_blocks.append(eval_metrics)
+                eval_history.append(eval_row)
+                append_history_row(output_dir, "eval_history", eval_row)
+                _print_oo_metrics("eval", eval_row)
+            checkpoint_metrics = combine_checkpoint_metrics(validation_blocks)
             write_history_files(
                 output_dir, "eval_history", eval_history, rewrite_jsonl=False
             )
-            _print_oo_metrics("eval", eval_row)
-            if best_metrics is None or metric_rank(eval_metrics) > metric_rank(best_metrics):
-                best_metrics = eval_metrics
+            if best_metrics is None or metric_rank(
+                checkpoint_metrics,
+                deadline_target=checkpoint_deadline_target,
+                reliability_target=checkpoint_reliability_target,
+                deadline_esp_threshold=checkpoint_deadline_esp_threshold,
+                deadline_esp_target=checkpoint_deadline_esp_target,
+            ) > metric_rank(
+                best_metrics,
+                deadline_target=checkpoint_deadline_target,
+                reliability_target=checkpoint_reliability_target,
+                deadline_esp_threshold=checkpoint_deadline_esp_threshold,
+                deadline_esp_target=checkpoint_deadline_esp_target,
+            ):
+                best_metrics = {
+                    "episode": int(episode),
+                    **checkpoint_metrics,
+                    "validation_blocks": eval_rows,
+                }
                 agent.save_checkpoint(
                     output_dir / "best_oo_actor_critic_checkpoint.pt",
                     objective_state=objective.state_dict(),
@@ -935,6 +999,20 @@ def run_training(config, *, smoke_test=False, episodes_override=None, seed_overr
                     config=config,
                     include_replay=save_replay,
                 )
+            best_rank = None if best_metrics is None else metric_rank(
+                best_metrics,
+                deadline_target=checkpoint_deadline_target,
+                reliability_target=checkpoint_reliability_target,
+                deadline_esp_threshold=checkpoint_deadline_esp_threshold,
+                deadline_esp_target=checkpoint_deadline_esp_target,
+            )
+            write_checkpoint_selection(
+                output_dir / "checkpoint_selection.json",
+                checkpoint_policy,
+                best_metrics,
+                best_rank,
+                "best_oo_actor_critic_checkpoint.pt",
+            )
 
     agent.save_checkpoint(
         output_dir / "final_checkpoint.pt",
