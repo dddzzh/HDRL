@@ -11,6 +11,7 @@ import math
 import numpy as np
 from src.D3QN.dual_head_constrained import DualHeadConstrainedD3QN
 from src.D3QN.dual_head_constrained import DualHeadHighLevelD3QNAgent
+from src.sac.reliability_lagrangian import LowReliabilityLagrangianController
 
 try:
     import torch
@@ -60,12 +61,73 @@ class ReliabilityLagrangian:
         }
 
     def load_state_dict(self, state):
-        value = float(dict(state or {}).get(
-            "lambda_reliability", self.lambda_reliability
-        ))
+        state = dict(state or {})
+        if state.get("high_dual_mode", MONOTONE_DUAL_MODE) != MONOTONE_DUAL_MODE:
+            raise ValueError(
+                "Checkpoint high reliability dual mode "
+                f"{state.get('high_dual_mode')!r} does not match "
+                f"{MONOTONE_DUAL_MODE!r}."
+            )
+        value = float(state.get("lambda_reliability", self.lambda_reliability))
         if not np.isfinite(value):
             raise ValueError("Restored reliability lambda must be finite.")
         self.lambda_reliability = float(np.clip(value, 0.0, self.lambda_max))
+
+
+MONOTONE_DUAL_MODE = "monotone_log_gap"
+TWO_SIDED_DUAL_MODE = "two_sided_miss_rate"
+
+
+class TwoSidedHighReliabilityLagrangian(LowReliabilityLagrangianController):
+    """Upper reliability multiplier with the same rule as the low-level one.
+
+    ``mu <- clip(mu + lr * (window miss rate - budget), 0, mu_max)`` once per
+    episode, where the window holds the last N completed workflows' binary
+    ``R_w < R_req`` indicators.  Unlike ``ReliabilityLagrangian`` it decreases
+    while the constraint is satisfied.  The Q_R head still learns the log-gap
+    cost; only the multiplier's observation changes.
+    """
+
+    def state_dict(self):
+        return {**super().state_dict(), "high_dual_mode": TWO_SIDED_DUAL_MODE}
+
+    def load_state_dict(self, state):
+        state = dict(state or {})
+        if state.get("high_dual_mode") != TWO_SIDED_DUAL_MODE:
+            raise ValueError(
+                "Checkpoint high reliability dual mode "
+                f"{state.get('high_dual_mode', MONOTONE_DUAL_MODE)!r} does not "
+                f"match {TWO_SIDED_DUAL_MODE!r}; refusing to silently reset mu_HR."
+            )
+        super().load_state_dict(state)
+
+
+def build_high_reliability_lagrangian(config):
+    mode = str(config.get("reliability_dual_mode", MONOTONE_DUAL_MODE)).strip().lower()
+    if mode == MONOTONE_DUAL_MODE:
+        return ReliabilityLagrangian(
+            lambda_init=float(config.get("lambda_reliability_init", 1.0)),
+            dual_lr=float(config.get("dual_lr_reliability", 0.001)),
+            lambda_max=float(config.get("lambda_reliability_max", 100.0)),
+        )
+    if mode != TWO_SIDED_DUAL_MODE:
+        raise ValueError(f"Unsupported high reliability_dual_mode: {mode!r}.")
+    # No silent defaults: the old per-workflow step size 0.001 has a different
+    # meaning (log-gap units, per workflow) and must not leak into this mode.
+    required = ("lambda_reliability_init", "dual_lr_reliability",
+                "lambda_reliability_max", "reliability_dual_budget",
+                "reliability_dual_window_workflows")
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"{TWO_SIDED_DUAL_MODE} requires explicit {missing}.")
+    return TwoSidedHighReliabilityLagrangian(
+        lambda_init=float(config["lambda_reliability_init"]),
+        dual_lr=float(config["dual_lr_reliability"]),
+        budget=float(config["reliability_dual_budget"]),
+        lambda_max=float(config["lambda_reliability_max"]),
+        warmup_episodes=0,
+        window_workflows=int(config["reliability_dual_window_workflows"]),
+    )
 
 
 class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
@@ -270,10 +332,11 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
             self.deadline_lagrangian_enabled = False
         old = self.agent_R
         self.reliability_required = float(config.get("reliability_required", 0.9))
-        self.reliability_lagrangian = ReliabilityLagrangian(
-            lambda_init=float(config.get("lambda_reliability_init", 1.0)),
-            dual_lr=float(config.get("dual_lr_reliability", 0.001)),
-            lambda_max=float(config.get("lambda_reliability_max", 100.0)),
+        self.reliability_lagrangian = build_high_reliability_lagrangian(config)
+        self.reliability_dual_mode = (
+            TWO_SIDED_DUAL_MODE
+            if isinstance(self.reliability_lagrangian, TwoSidedHighReliabilityLagrangian)
+            else MONOTONE_DUAL_MODE
         )
         self.agent_R = ReliabilityAwareConstrainedD3QN(
             state_dim=old.state_dim, action_dim=old.action_dim,
@@ -433,8 +496,10 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
             )
         # The dual update is deliberately after the workflow-level costs have
         # been assembled, never once per task transition.
-        self.update_reliability_lagrangian(list(completed.values()))
-        return {"stored": float(buffer.size),
+        dual_metrics = self.update_reliability_lagrangian(list(completed.values()))
+        return {**{key: value for key, value in dual_metrics.items()
+                   if key.startswith("reliability_dual_")},
+                "stored": float(buffer.size),
                 "completed_workflows": float(len(completed)),
                 "reliability_cost_total": float(terminal_costs.sum()),
                 "reliability_cost_mean": float(terminal_costs.mean()),
@@ -446,6 +511,20 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
                 )}
 
     def update_reliability_lagrangian(self, completed_costs):
+        if isinstance(self.reliability_lagrangian, TwoSidedHighReliabilityLagrangian):
+            # cost = max(0, log R_req - log R_w) > 0  <=>  R_w < R_req.
+            misses = [float(float(cost) > 0.0) for cost in completed_costs]
+            row = self.reliability_lagrangian.update(misses, episode=0)
+            return {"lambda_reliability": self.lambda_reliability,
+                    "completed_workflow_count": float(len(misses)),
+                    "reliability_cost_mean": (
+                        float(np.mean(completed_costs)) if misses else 0.0
+                    ),
+                    "reliability_dual_lambda_before_update": row[
+                        "low_reliability_lambda_before_update"],
+                    "reliability_dual_miss_rate": row["low_reliability_constraint_mean"],
+                    "reliability_dual_excess": row["low_reliability_constraint_excess"],
+                    "reliability_dual_updated": row["low_reliability_dual_updated"]}
         rows = []
         for cost in completed_costs:
             rows.append(self.reliability_lagrangian.update(cost))
