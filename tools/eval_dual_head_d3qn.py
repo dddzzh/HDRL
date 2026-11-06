@@ -160,6 +160,7 @@ def main():
     )
 
     rows = []
+    high_algorithm = str(config.get("agent", {}).get("high_algorithm", "d3qn"))
     for offset in range(args.num_seeds):
         seed = args.seed_start + offset
         with redirect_stdout(StringIO()):
@@ -180,7 +181,7 @@ def main():
                 high_deterministic=True,
                 low_deterministic=True,
                 fixed_low_rho_one=not args.use_low_sac,
-                high_algorithm="d3qn",
+                high_algorithm=high_algorithm,
             )
         metrics = result["metrics"]
         row = {
@@ -204,6 +205,7 @@ def main():
         "deadline_head_cost_mode": payload.get("deadline_head_cost_mode"),
         "fixed_low_rho_one": not args.use_low_sac,
         "low_agent_used": bool(args.use_low_sac),
+        "high_algorithm": high_algorithm,
         "evaluation_rho_floor": args.rho_floor,
         "evaluation_enforce_rho_safe": bool(args.enforce_rho_safe),
         "deadline_type": config.get("simulation", {}).get("deadline_type", "medium"),

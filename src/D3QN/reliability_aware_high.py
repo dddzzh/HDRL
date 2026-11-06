@@ -70,7 +70,9 @@ class ReliabilityLagrangian:
 
 class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
     """Production dual-head learner with a third reliability-cost head."""
-    def __init__(self, *args, reliability_learning_rate=None, reliability_gamma=0.99, **kwargs):
+    def __init__(self, *args, reliability_learning_rate=None, reliability_gamma=0.99,
+                 deadline_head_enabled=True, **kwargs):
+        self.deadline_head_enabled = bool(deadline_head_enabled)
         super().__init__(*args, **kwargs)
         if torch is None:  # pragma: no cover
             raise ImportError("PyTorch is required for Reliability D3QN.")
@@ -107,11 +109,21 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
         self.reliability_costs[index] = value
 
     def action_q_values(self, observation):
-        energy, deadline = super().action_q_values(observation)
         state = torch.as_tensor(np.asarray([observation], dtype=np.float32), device=self.device)
         with torch.no_grad():
+            energy = self.energy_q_eval(state)[0]
+            if self.deadline_head_enabled:
+                deadline = self.deadline_q_eval(state)[0]
+                if self.nonnegative_deadline_q:
+                    deadline = torch.clamp(deadline, min=0.0)
+            else:
+                deadline = torch.zeros_like(energy)
             reliability = self.reliability_q_eval(state)[0]
-        return energy, deadline, reliability.detach().cpu().numpy().astype(np.float64)
+        return (
+            energy.detach().cpu().numpy().astype(np.float64),
+            deadline.detach().cpu().numpy().astype(np.float64),
+            reliability.detach().cpu().numpy().astype(np.float64),
+        )
 
     def combined_action_q_values(self, observation, deadline_lambda, reliability_lambda):
         energy, deadline, reliability = self.action_q_values(observation)
@@ -120,12 +132,15 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
 
     def _next_actions(self, next_states, next_masks, deadline_lambda, reliability_lambda=1.0):
         with torch.no_grad():
-            deadline = self.deadline_q_eval(next_states)
-            if self.nonnegative_deadline_q:
-                deadline = torch.clamp(deadline, min=0.0)
-            combined = (self.energy_q_eval(next_states)
-                        - float(deadline_lambda) * deadline
-                        - float(reliability_lambda) * self.reliability_q_eval(next_states))
+            combined = (
+                self.energy_q_eval(next_states)
+                - float(reliability_lambda) * self.reliability_q_eval(next_states)
+            )
+            if self.deadline_head_enabled:
+                deadline = self.deadline_q_eval(next_states)
+                if self.nonnegative_deadline_q:
+                    deadline = torch.clamp(deadline, min=0.0)
+                combined = combined - float(deadline_lambda) * deadline
             return torch.argmax(combined.masked_fill(~next_masks, -1e9), dim=-1)
 
     def learn(self, deadline_lambda, reliability_lambda=1.0):
@@ -155,18 +170,35 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
 
         energy_loss, energy_q, _ = loss_for(self.energy_q_eval, self.energy_q_target,
                                              torch.as_tensor(batch["energy_rewards"], dtype=torch.float32, device=self.device), self.energy_gamma)
-        deadline_loss, deadline_q, _ = loss_for(self.deadline_q_eval, self.deadline_q_target,
-                                                 torch.as_tensor(batch["deadline_costs"], dtype=torch.float32, device=self.device), self.deadline_gamma,
-                                                 nonnegative_target=self.nonnegative_deadline_q)
+        if self.deadline_head_enabled:
+            deadline_loss, deadline_q, _ = loss_for(
+                self.deadline_q_eval,
+                self.deadline_q_target,
+                torch.as_tensor(
+                    batch["deadline_costs"], dtype=torch.float32, device=self.device
+                ),
+                self.deadline_gamma,
+                nonnegative_target=self.nonnegative_deadline_q,
+            )
+        else:
+            deadline_loss = torch.zeros((), dtype=torch.float32, device=self.device)
+            deadline_q = torch.zeros_like(energy_q)
         reliability_loss, reliability_q, reliability_target = loss_for(self.reliability_q_eval, self.reliability_q_target,
                                                                          rel_rewards, self.reliability_gamma)
         total = energy_loss + deadline_loss + reliability_loss
         if not bool(torch.isfinite(total).item()):
             raise FloatingPointError("Reliability-aware D3QN loss contains NaN or Inf.")
         gradients = []
-        for optimizer, loss, network in ((self.energy_optimizer, energy_loss, self.energy_q_eval),
-                                         (self.deadline_optimizer, deadline_loss, self.deadline_q_eval),
-                                         (self.reliability_optimizer, reliability_loss, self.reliability_q_eval)):
+        learners = [
+            (self.energy_optimizer, energy_loss, self.energy_q_eval),
+            (self.reliability_optimizer, reliability_loss, self.reliability_q_eval),
+        ]
+        if self.deadline_head_enabled:
+            learners.insert(
+                1,
+                (self.deadline_optimizer, deadline_loss, self.deadline_q_eval),
+            )
+        for optimizer, loss, network in learners:
             optimizer.zero_grad(); loss.backward()
             gradients.append(float(torch.nn.utils.clip_grad_norm_(network.parameters(), self.max_grad_norm)))
             optimizer.step()
@@ -182,13 +214,20 @@ class ReliabilityAwareConstrainedD3QN(DualHeadConstrainedD3QN):
 
     def state_dict(self, *, include_replay=False):
         payload = super().state_dict(include_replay=include_replay)
-        payload.update({"reliability_q_eval": self.reliability_q_eval.state_dict(),
+        payload.update({"deadline_head_enabled": self.deadline_head_enabled,
+                        "reliability_q_eval": self.reliability_q_eval.state_dict(),
                         "reliability_q_target": self.reliability_q_target.state_dict(),
                         "reliability_optimizer": self.reliability_optimizer.state_dict(),
                         "reliability_costs": self.reliability_costs.copy() if include_replay else None})
         return payload
 
     def load_state_dict(self, payload):
+        saved_enabled = bool(payload.get("deadline_head_enabled", True))
+        if saved_enabled != self.deadline_head_enabled:
+            raise RuntimeError(
+                "Checkpoint Deadline-head ablation mismatch: "
+                f"checkpoint={saved_enabled}, config={self.deadline_head_enabled}."
+            )
         super().load_state_dict(payload)
         self.reliability_q_eval.load_state_dict(payload["reliability_q_eval"])
         self.reliability_q_target.load_state_dict(payload["reliability_q_target"])
@@ -223,6 +262,12 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
     def __init__(self, config=None, seed=42):
         super().__init__(config=config, seed=seed)
         config = dict(config or {})
+        self.deadline_head_enabled = bool(
+            config.get("deadline_head_enabled", True)
+        )
+        if not self.deadline_head_enabled:
+            self.deadline_lagrangian = None
+            self.deadline_lagrangian_enabled = False
         old = self.agent_R
         self.reliability_required = float(config.get("reliability_required", 0.9))
         self.reliability_lagrangian = ReliabilityLagrangian(
@@ -245,6 +290,7 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
             max_grad_norm=float(config.get("max_grad_norm", 1.0)),
             deadline_positive_fraction=float(config.get("deadline_positive_fraction", 0.3)),
             nonnegative_deadline_q=bool(config.get("nonnegative_deadline_q", False)),
+            deadline_head_enabled=self.deadline_head_enabled,
             device=config.get("device", "auto"), seed=seed,
         )
         # Compatibility names used by the production checkpoint/logger path.
@@ -291,7 +337,16 @@ class ReliabilityAwareHighLevelD3QNAgent(DualHeadHighLevelD3QNAgent):
         # head is trained on the configured normalized/miss-credit signal.
         episode_failed = 0.0
         responsibility_total = 0.0
-        if self.deadline_head_cost_mode == "dense_normalized_makespan_miss_credit":
+        if not self.deadline_head_enabled:
+            deadline_costs = np.zeros(buffer.size, dtype=np.float32)
+            deadline_misses = {
+                str(workflow_id): float(
+                    float(buffer.partial_makespans[indices[-1]])
+                    > float(buffer.deadline_limits[indices[-1]]) + EPS
+                )
+                for workflow_id, indices in buffer.workflow_groups()
+            }
+        elif self.deadline_head_cost_mode == "dense_normalized_makespan_miss_credit":
             deadline_costs, deadline_misses = (
                 self.workflow_dense_miss_credit_deadline_costs(
                     buffer,

@@ -1,0 +1,302 @@
+\documentclass[UTF8,11pt,a4paper,fontset=fandol]{ctexart}
+\usepackage[margin=21mm,top=23mm,bottom=22mm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,array,tabularx,xcolor}
+\usepackage{enumitem,fancyhdr,lastpage,hyperref,tcolorbox,xurl}
+\definecolor{ink}{HTML}{355F86}
+\definecolor{pale}{HTML}{EDF3F8}
+\definecolor{warm}{HTML}{F8F2E8}
+\hypersetup{colorlinks=true,linkcolor=ink,urlcolor=ink,pdftitle={CAHDRL审稿意见修改方案},pdfauthor={}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\linespread{1.12}
+\setlist[itemize]{leftmargin=1.5em,itemsep=3pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.7em,itemsep=3pt,topsep=3pt}
+\ctexset{section={format=\Large\bfseries\color{ink}},subsection={format=\normalsize\bfseries,beforeskip=10pt,afterskip=3pt}}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small CAHDRL\quad 审稿意见修改方案}
+\fancyhead[R]{\small 无需重训优先 · 2026年11月5日}
+\fancyfoot[C]{\small 第\thepage 页 / 共\pageref{LastPage}页}
+\setlength{\headheight}{16pt}
+\newtcolorbox{decision}{colback=pale,colframe=ink!45,boxrule=.5pt,arc=1mm,left=2mm,right=2mm,top=1mm,bottom=1mm}
+\newtcolorbox{risk}{colback=warm,colframe=brown!40,boxrule=.5pt,arc=1mm,left=2mm,right=2mm,top=1mm,bottom=1mm}
+\newenvironment{draft}{\begin{quote}\small\setlength{\parskip}{4pt}}{\end{quote}}
+\newcommand{\partpage}[2]{\section*{#1\quad #2}}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\begin{document}
+\partpage{01}{决策摘要：保留成果，修正主张与证据的对应}
+\textbf{用途：}针对用户提供的九条主要审稿意见与六条次要意见，形成可执行修改清单。依据当前 \code{main2.tex}、实现和归档实验记录整理；评审中的式号可能随排版变化，应按小节标题定位。
+
+\begin{decision}
+\textbf{建议路线：不立即推翻现有模型。}优先纠正协议描述，将代理奖励、固定计划回放和自适应惩罚写准确；补充已有日志可支持的证据。\textbf{不把文字收窄等同于修复代码，不把经验达标等同于总体保证。}
+\end{decision}
+
+\textbf{本文件仅为方案。}没有修改论文、训练代码、模型或实验数据，没有启动重训或评估。后续实施须另行确认。
+
+\renewcommand{\arraystretch}{1.17}
+\begin{tabularx}{\linewidth}{@{}p{9mm}p{33mm}Xp{18mm}@{}}
+\toprule
+意见 & 核心问题 & 当前处理方式 & 见页\\\midrule
+M1 & 奖励与总能耗不等价 & 明确代理目标；撤回等价与最优性暗示 & 2\\
+M2 & SAC动作表示不一致 & 披露并整理触发日志；风险不能靠文字消除 & 4\\
+M3 & 固定回放漏掉部分延迟 & 已复现反例；收窄为固定计划回放成本 & 3\\
+M4 & 软反馈与约束保证 & 区分设计要求、训练控制、经验评价 & 2、6\\
+M5 & 基线公平性 & 纠正频率范围：离散基线也映射到能效下界 & 5\\
+M6 & 机制证据不足 & 改为组件比较；先处理RFR来源缺口 & 6\\
+M7 & 单训练种子与协议 & 补真实训练/选模表；限定统计外推 & 6、7\\
+M8 & 截止期描述矛盾 & 区分训练HEFT与共享FCFS测试期限 & 5\\
+M9 & 仿真与系统外推 & 限定活动计算能耗；补映射与开销说明 & 7\\\bottomrule
+\end{tabularx}
+
+\subsection*{优先级不是按审稿人的“致命”标签机械排序}
+\begin{enumerate}
+\item \textbf{先修事实：}期限生成、基线频率映射、训练预算、RFR原始记录。
+\item \textbf{再修主张：}代理奖励、回放范围、软约束与统计边界。
+\item \textbf{然后补证据：}从现有记录整理诊断和不确定性，不新增训练。
+\item \textbf{保留风险：}M2是真实实现问题；若要根治，须统一动作语义并重新验证模型，不能承诺此次文稿修改已解决。
+\end{enumerate}
+
+\newpage
+\partpage{02}{奖励与拉格朗日：明确是经验性代理方法}
+\subsection*{M1：接受数学判断，但不必因此重做全部实验}
+原奖励为
+\[
+r_t^H=\frac{\bar E_i-E_i}{n_w\bar E_i}.
+\]
+若 $E_i=L_i c_{m_i}(\rho_i)$、$\bar E_i=L_i\bar c$，则
+\[
+r_t^H=\frac{1-c_{m_i}(\rho_i)/\bar c}{n_w}.
+\]
+任务工作量被约去，工作流任务数又改变权重。因此，该奖励\textbf{不是总焦耳数的等价归一化}；折扣与下层标准化进一步改变学习目标。它可以作为代理反馈，但不能声称与原优化问题等价。
+
+\textbf{改动位置：}摘要/方法概述中的求解措辞；Energy Feedback公式后；结论中的最优性或求解保证。保留真实能耗公式和现有J单位结果，不改奖励公式冒充新实现。
+
+\textbf{建议英文：}
+\begin{draft}
+The assignment reward is a workflow-normalized relative-energy surrogate, rather than an equivalent transformation of total computation energy. CAHDRL is trained with this surrogate and constraint-related feedback, whereas all reported energy comparisons use unnormalized computation energy in joules.
+\end{draft}
+
+\subsection*{M4：保留约束问题作为目标，不声称严格对偶求解}
+问题定义可以提出低能耗、批次截止期概率和逐工作流可靠性要求。现有方法使用有界自适应软惩罚，不具备硬可行性修复或严格原始--对偶收敛保证。
+
+\textbf{建议英文：}
+\begin{draft}
+The constrained formulation specifies the scheduling objective and service requirements. CAHDRL uses layer-specific surrogate costs and bounded adaptive penalties to encourage their satisfaction; it does not provide a hard-feasibility or primal--dual convergence guarantee.
+\end{draft}
+
+下层可靠性控制预算 $b_R=0.005$ 是训练控制器参数，不应解释为测试可允许0.5\%工作流违反要求。测试仍逐工作流检查门槛。
+\begin{draft}
+The lower-level reliability budget is a training-controller parameter, not a relaxation of the evaluation requirement. Evaluation checks the reliability threshold for every workflow.
+\end{draft}
+
+\begin{risk}
+\textbf{不可采用的捷径：}只把标题改为“Lagrangian-inspired”，正文却继续声称精确求解、保证满足约束，或把PI当作新提出的理论方法。PI/PID乘子更新已有先例，应保留已有引用。收窄表述不证明代理奖励最佳，也不补上收敛证明。
+\end{risk}
+
+\newpage
+\partpage{03}{固定计划回放：承认反例，精确定义作用范围}
+\subsection*{M3已经用当前函数复现，不建议反驳}
+直接调用现有回放函数的最小合成案例：同一服务器，依赖链 $A\to B$，到达时刻0，截止期2.5秒；全频时每个任务需1秒。
+
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+计划 & $A$完成 & $B$开始 & 工作流完成\\\midrule
+实际：$A$半频，$B$全频 & 2 & 2 & 3\\
+固定分配时刻，全频回放 & 1 & 2 & 3\\
+允许提前分配的全频计划 & 1 & 1 & 2\\\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{核查结果：}现有函数返回实际与全频固定回放均为3秒。最后一行是该简单案例的手算可行计划，不是另一次学习策略评估。因原始分配时刻被固定，回放迟到差为0，却不能说明DVFS对整体迟到没有影响。
+
+\subsection*{需要修改的核心句子}
+原句：“The cost $d_v^L$ measures lateness attributable to DVFS.”
+
+\textbf{建议替换：}
+\begin{draft}
+The cost $d_v^L$ measures the reduction in normalized lateness obtainable by restoring full frequency under fixed assignments, dispatch times, and server orders. It is a restricted replay-based surrogate, not the total causal effect of DVFS. In particular, it does not capture improvements that require successor tasks to be dispatched earlier.
+\end{draft}
+
+\textbf{同步修改范围：}
+\begin{itemize}
+\item 方法中“DVFS-induced lateness”涉及该成本时，改为有条件的“replay-estimated lateness reduction”。
+\item 保留回放、边际与分配公式，但明确它们相对于固定计划定义。
+\item 引言不再把完整责任归因、精确因果分解列为独立贡献。
+\item 局部延迟惩罚可说明为另一项反馈，不能拿它证明回放本身没有盲区。
+\end{itemize}
+
+\begin{decision}
+\textbf{保留什么？}保留这个受限反馈机制和已训练模型。它仍可反映某些已分配任务在依赖/服务器释放变化下的迟到减少。\textbf{放弃什么？}放弃“识别全部DVFS影响”“证明因果责任”“精确捕捉依赖链延迟”的主张。
+\end{decision}
+
+\textbf{证据定位：}\code{tools/train_hierarchical_d3qn.py}，函数\newline
+\code{_fixed_schedule_counterfactual_model} 与 \code{_replay_fixed_schedule}。合成检查未编辑源代码，也未运行完整仿真实验。
+
+\newpage
+\partpage{04}{SAC动作表示：当前最需要保留的技术风险}
+\subsection*{M2成立：执行动作与更新采样动作不完全一致}
+执行频率为
+\[
+\rho_i=\max\{\rho_i^a,\rho_{m_i}^{\mathrm{ee}}\}.
+\]
+经验中的动作与critic回归使用执行频率；actor损失和target计算使用采样proposal。当下界触发时，动作语义不一致。不能把它描述成标准可行动作参数化SAC。
+
+\subsection*{已经存在的低成本证据}
+从保留的SM74训练日志重新统计：
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+训练区间 & 逐轮执行裁剪率的算术平均\\\midrule
+前100轮 & 26.80\%\\
+最后200轮 & 约0.0018\%\\\bottomrule
+\end{tabular}
+\end{center}
+这些数值只统计\textbf{环境交互时的执行动作}，不是actor/target更新过程中全部采样动作的裁剪率，也不是每台服务器的独立统计。它说明后期交互很少触发下界，但不能排除早期训练或更新采样受到影响。
+
+\textbf{建议英文：}
+\begin{draft}
+The implementation stores executed frequency ratios for critic regression, whereas actor and target updates evaluate sampled proposals. These representations differ when the execution floor is active. In the retained SM training logs, the episode-averaged execution-floor activation rate decreases from 26.80\% in the first 100 episodes to approximately 0.0018\% in the last 200 episodes. These rollout statistics do not establish consistency of all actions sampled during policy updates.
+\end{draft}
+
+\subsection*{本轮不重训能做与不能做的事}
+\begin{itemize}
+\item \textbf{能做：}准确披露实现；整理各资源训练阶段的已有日志；说明统计口径；撤回与标准SAC完全等价的暗示。
+\item \textbf{不能做：}根据最终表现好就宣布不一致无影响；把晚期低裁剪率外推到全部更新；只改论文公式冒充修复后的训练。
+\item \textbf{后续真正修复：}统一proposal、经验、critic、target、actor及熵项的动作语义，随后重新训练或进行足够的重新验证。具体实施不在本方案执行范围内。
+\end{itemize}
+
+\begin{risk}
+\textbf{投稿风险仍存在。}披露和诊断能界定问题，不能修复问题。若审稿人将动作一致性作为接收前提，仅修改文稿不能满足该要求。当前优先级是先确认事实，不在时间紧张时无验证地修改核心算法。
+\end{risk}
+
+\textbf{代码：}\code{src/sac/hierarchical_low_sac.py}，\code{select_frequency} 及SAC更新段。\textbf{日志：}\code{results/paper_current/models/sm_74_d3qn_sac/}。
+
+\newpage
+\partpage{05}{实验协议：两项可以直接纠正的关键描述}
+\subsection*{M5：基线也有能效下界，论文没有写对}
+DReaM名义档位为 $(0.4,0.5,\ldots,1)$；OOAC为 $(0.2,0.4,0.6,0.8,1)$。\textbf{实际执行不是直接使用这些名义数值}，而是共同映射到所选服务器的 $[\rho_m^{\mathrm{ee}},1]$：
+\[
+\rho_{m,k}=\rho_m^{\mathrm{ee}}+
+\frac{\ell_k-\ell_{\min}}{\ell_{\max}-\ell_{\min}}
+(1-\rho_m^{\mathrm{ee}}).
+\]
+该处理同时存在于当前代码与归档源码快照；OOAC候选评分和实际执行使用映射后的频率。因此，“只有CAHDRL有下界”可据实现反驳。
+
+\textbf{替换正文中“Discrete frequencies span $[\underline\rho_m,1]$”：}
+\begin{draft}
+For both discrete-frequency baselines, nominal frequency levels are mapped to the server-specific interval $[\rho_m^{\mathrm{ee}},1]$. DReaM-DQN and OOAC use seven and five levels, respectively. All frequency-controlling methods therefore share the same energy-efficient lower bound, while differing in action resolution and decision mechanisms.
+\end{draft}
+这并不自动证明改编完全无影响或调参预算相同；仍需保留“adapted implementations”的范围说明，不承诺未记录的等额搜索。
+
+\subsection*{M8：测试期限来自共享负载参考，不是isolated FIFS}
+当前测试生成器对整批工作流运行一次全频FCFS/first-idle参考仿真，包含依赖、通信和跨工作流竞争，再固定各工作流期限。
+\begin{draft}
+Evaluation deadlines are generated from a separate full-frequency FCFS/first-idle reference simulation of the complete workload realization. Reference response times include dependency, communication, and cross-workflow resource contention. The resulting deadlines are fixed before policy evaluation and shared by all compared methods.
+\end{draft}
+\textbf{另外必须说明：}
+\begin{itemize}
+\item 当前采用模型的旧训练期限协议为isolated HEFT，不能跟测试FCFS混写。逐模型以冻结配置为准。
+\item 离线参考生成与策略执行分开；策略只在工作流到达时获得其信息，不读取未来到达事件或参考放置。
+\item 数量实验重算共享参考预算，不等价于服务压力单调增强；到达率实验使用基准到达率下固定的相对期限。
+\item Tight是所定义期限分布的名称，不自动表示接近可行边界。
+\end{itemize}
+
+\textbf{实现定位：}\code{src/simulator/resource.py}；\code{src/baselines/dream/dream_scheduler.py}；\code{tools/train_oo_actor_critic.py}；\code{src/datasets/sec_job_workflow_generator.py}。
+
+\newpage
+\partpage{06}{消融与统计：先保证证据来源，再限定结论}
+\subsection*{第一项阻断检查：RFR原始记录尚未定位}
+当前 \code{results/paper_current/README.md} 和manifest仍把D3QN-RFR三档结果标为未找到匹配原始记录；正文却仍有数值、机制分析和McNemar检验。
+\begin{risk}
+\textbf{处理规则：}先找对应原始行、模型、配置与种子并核验；若找不到，移除RFR数值及依赖它的结论/检验。不能用可靠性预检顶替，不能从论文汇总计数重算检验就视为来源已核实。本方案尚未执行移除。
+\end{risk}
+
+\subsection*{M6：消融改为组件比较与诊断}
+建议标题：\textit{Component Comparisons and Diagnostics}。
+\begin{itemize}
+\item CAHDRL vs D3QN-FF：固定网络权重下启用频率策略的作用，不是独立重训的分配器比较；后续放置可能随队列变化。
+\item D3QN-FF vs HEFT-FF：优势不完全依赖DVFS，不证明某一反馈模块独立有效。
+\item HEFT-SAC：该训练配置的表现，不等于所有HEFT+SAC实现均失败。
+\item D3QN-ND-FF：无deadline、全频训练版本的失败诊断；不能严格隔离deadline head。
+\item 可靠性裕量及非零惩罚：证明反馈曾触发和策略保留裕量，不证明反馈不可替代。
+\end{itemize}
+\begin{draft}
+These comparisons assess the complete scheduling design and selected component interventions. They do not isolate the individual effects of replay attribution, PI adaptation, or separate constraint multipliers.
+\end{draft}
+
+\subsection*{M4、M7：经验比较不等于总体认证或训练稳定性}
+在独立同分布假设下，20次全部成功的精确单侧95\%置信下界为
+\[
+p_{\mathrm{lower}}=0.05^{1/20}\approx0.8609.
+\]
+29次全部成功时约为0.9019。\textbf{这不是要求补跑到29再择优停止的建议}，也不是所有论文必须29次；它只说明20/20不能据此认证总体成功概率至少0.9。多条件同时保证另需校正。
+
+\begin{draft}
+The paired tests quantify workload-level differences between fixed checkpoints. Variability across independent training runs is not evaluated. Reported attainment rates describe the evaluated realizations rather than providing population-level feasibility guarantees.
+\end{draft}
+保留真实失败，统一置信区间方法与单双侧含义。可从现有配对数据补能耗差区间；Wilcoxon显著性不能代替多训练种子。连续种子编号本身也不构成独立预注册或总体代表性的证明。
+
+\newpage
+\partpage{07}{无需重训的补充材料与次要问题清单}
+\subsection*{已有记录优先：做得到的写，缺失的注明}
+\begin{enumerate}
+\item \textbf{复现协议表：}算法/资源、配置预算、实际记录范围、验证频率与样本数、选择规则、选中轮次、训练与评估种子。实际训练预算和选中轮次分列，不因模型在1200轮内选中就改写实际1500轮训练记录。
+\item \textbf{训练诊断：}乘子、约束统计、惩罚和执行下界触发率；明确逐轮平均还是按任务数加权。已有日志可以整理，无需重新训练。
+\item \textbf{测试分布：}批次SR、违反幅度与可用的工作流可靠性裕量；没有工作流级原始记录就不由汇总量反推。
+\item \textbf{统计附表：}现有配对能耗差及区间、各达标率区间。预先说明方法和比较范围，不筛掉失败后再作总体推断。
+\end{enumerate}
+
+\subsection*{六条次要意见的处理}
+\begin{itemize}
+\item \textbf{观测向量：}附逐维特征、单位、归一化/截断与缺失值规则；必须对应实际编码器，不能凭论文维度猜。
+\item \textbf{0.999先验：}称为固定启发式的未调度任务可靠性估计，不写成经过校准的真值；承认乘积随任务数变化。
+\item \textbf{Q值截断不对称：}如实保留deadline截断、reliability不截断的实现；负值是否出现须有诊断，不能凭成本非负断言估计非负。
+\item \textbf{事件与并列规则：}补实际环境的同刻事件顺序、ready-set去重/移除与tie-breaking。参考调度器和学习环境可能不同，应分别核对。
+\item \textbf{图注：}写明箱体IQR、中位数、须的定义和不显示离群点的规则；不显示点不等于从统计中删除样本。
+\item \textbf{单位：}当前传输代码按MB乘8转换为Mbit并除以Mbit/s；论文应统一采用与实现一致的十进制单位约定。
+\end{itemize}
+
+\subsection*{M9：明确系统边界，不立即增加整套平台实验}
+只主张\textbf{活动计算能耗}，不外推为平台总能耗。Alibaba实验说明保留的DAG信息、工作量/数据量映射及校准划分；定位为trace-derived仿真迁移，而非真实部署验证。网络竞争、空闲功耗和真实平台测试可作为限制与后续工作，但不能把遗漏能耗说成所有方法相同的常数。
+
+\textbf{另外两处直接修正文稿：}
+\begin{itemize}
+\item 当前执行函数会计算twin critics诊断值。应区分“决策仅需actor”与“当前实现实际调用critic”，不写成critics仅在训练时使用。
+\item \code{main2.log} 中仍有未定义引用 \code{li2026survey}。应核实真实来源再修复，不凭空补文献。
+\end{itemize}
+
+\newpage
+\partpage{08}{执行顺序、反驳边界与交付验收}
+\subsection*{建议分三批实施}
+\begin{enumerate}
+\item \textbf{第一批：文稿事实与主张。}先处理RFR来源；修正期限、频率映射和训练协议；重写代理奖励、回放范围、软约束和组件比较。保留数据与实现。
+\item \textbf{第二批：已有记录补证据。}生成训练协议表、日志诊断、可计算的分布与区间。任何缺失项列清楚，不用合成数值或其他实验替代。
+\item \textbf{第三批：全文一致性。}摘要、贡献、方法、图注、结论逐一检查；删除残留的保证性或因果性强表述；编译并检查版面和引用。
+\end{enumerate}
+
+\subsection*{哪些要求可以有理有据地限定？}
+\begin{itemize}
+\item “基线没有能效下界”与实际映射不符，可直接纠正。
+\item “代理奖励不等价所以方法必然无效”过度推断；但必须承认代理与目标差异。
+\item “至少五个训练种子/真实平台/所有模块重训”是增强证据的要求，不是通用数学门槛；不做就收窄相应结论，不能假称证据已齐全。
+\item “约4\%的DVFS增益没有价值”不能直接推出；它也不能证明复杂频率机制优于所有简单规则。
+\end{itemize}
+
+\textbf{不可反驳的事实：}M2动作不一致、M3回放盲区、M1非等价、单训练种子的统计局限、当前没有硬可行性保证。收窄主张不意味着审稿人必须接受，也不保证投稿结果。
+
+\subsection*{贡献表述建议：替换主张，不增加未经验证的优势}
+\begin{draft}
+We develop a hierarchical scheduling framework that coordinates discrete server assignment and continuous frequency control through layer-specific surrogate feedback and adaptive penalties. Evaluation of fixed checkpoints demonstrates lower active computation energy than the adapted baselines under the modeled workloads, while component comparisons characterize selected design effects without establishing the independent superiority of every feedback mechanism.
+\end{draft}
+
+\subsection*{验收标准}
+\begin{itemize}
+\item 文稿所述协议、奖励、动作与实际实验版本一致；不以改公式冒充改代码。
+\item 所有数值与统计检验可追溯至原始记录；未核验的RFR不当作已验证结果。
+\item 区分训练预算/选中轮次、训练种子/测试种子、经验达标/总体认证。
+\item M2列为未消除风险；未实施的补充分析不写成完成。
+\end{itemize}
+
+{\small\textbf{证据入口：}当前\code{paper/manuscript/main2.tex}；\code{results/paper_current/README.md}、\code{manifest.json}及\code{provenance/source_snapshots/}；本文件对应2026年11月5日核查。原始方法参考：\href{https://proceedings.mlr.press/v80/haarnoja18b.html}{Haarnoja et al., SAC, ICML 2018}；\href{https://proceedings.mlr.press/v119/stooke20a.html}{Stooke et al., PID Lagrangian, ICML 2020}。引用不为本项目的动作表示或归因设计提供自动保证。}
+\end{document}

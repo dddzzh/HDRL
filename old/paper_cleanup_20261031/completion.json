@@ -1,0 +1,15 @@
+﻿{
+    "date":  "2026-10-31",
+    "status":  "complete",
+    "retained_models":  14,
+    "deleted_original_checkpoint_files":  21726,
+    "deleted_original_checkpoint_bytes":  108856077804,
+    "archived_files":  7081,
+    "archived_top_level_results":  160,
+    "removed_test_files":  188,
+    "test_recovery_archive":  "regression_tests_backup.zip",
+    "raw_historical_data_hashes_verified":  true,
+    "current_manifest_sha256":  "dc25a35e149fa897203dbc47706efdeb84600cdfc3ccb0e64dcb890a9e593499",
+    "manuscript_changed":  false,
+    "warning":  "Current main2.tex was independently restored to old DQN-Edge values; 27 DQN-Edge mean cells differ from curated current data. RFR raw evidence remains unidentified."
+}

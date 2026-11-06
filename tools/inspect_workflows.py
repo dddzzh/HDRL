@@ -2,7 +2,7 @@
 
 用法::
 
-    python tools/inspect_workflows.py --config configs/v2_small_20edge_6cloud.json --num-workflows 100
+    python tools/inspect_workflows.py --config configs/v2_small_20edge_6cloud_dvfs_v3_future_esp.json --num-workflows 100
 """
 
 from __future__ import annotations
@@ -22,10 +22,11 @@ from src.simulator.workflow import Workflow
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inspect sampled workflows: stats + checks.")
-    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
+    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud_dvfs_v3_future_esp.json")
     parser.add_argument("--dataset", default=None, choices=["pegasus", "alibaba_pool", "alibaba_json"])
     parser.add_argument("--num-workflows", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--deadline-type", choices=["loose", "medium", "tight"], default=None)
     return parser.parse_args()
 
 
@@ -51,13 +52,13 @@ def main() -> None:
         config = json.load(file)
 
     dataset_cfg = dict(config.get("dataset", {}))
-    dataset_type = args.dataset or dataset_cfg.get("type", "pegasus")
+    dataset_type = args.dataset or config.get("generator", {}).get("source", dataset_cfg.get("type", "pegasus"))
 
     resources = load_resources(
         str(PROJECT_ROOT / config["resources"]["path"]),
         num_edge=config["resources"]["num_edge"],
         num_cloud=config["resources"]["num_cloud"],
-        seed=args.seed,
+        seed=int(config.get("evaluation", {}).get("resource_seed", args.seed)),
     )
     links = resources["network"]["link_bandwidth_mbps"]
     if dataset_type == "alibaba_pool":
@@ -71,8 +72,11 @@ def main() -> None:
     else:
         gen_cfg = dict(config.get("generator", {}))
         gen_cfg["num_workflows"] = args.num_workflows
+        sim_cfg = config.get("simulation", {})
+        gen_cfg["deadline_type"] = args.deadline_type or sim_cfg.get("deadline_type", "medium")
+        gen_cfg["workflow_reliability_requirement"] = sim_cfg.get("workflow_reliability_requirement", 0.9)
         workflows = create_workflows(
-            gen_cfg, source="pegasus", seed=args.seed, resources=resources
+            gen_cfg, source=dataset_type, seed=args.seed, resources=resources
         )
 
     print(f"dataset: {dataset_type}")

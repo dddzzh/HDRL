@@ -1,0 +1,117 @@
+{
+  "dataset": "Original complete unfiltered evaluation, NOT success-selected panel",
+  "num_workflows_per_seed": 50,
+  "seeds": [
+    742000,
+    742001,
+    742002,
+    742003,
+    742004,
+    742005,
+    742006,
+    742007,
+    742008,
+    742009,
+    742010,
+    742011,
+    742012,
+    742013,
+    742014,
+    742015,
+    742016,
+    742017,
+    742018,
+    742019
+  ],
+  "records": 2160,
+  "boxes": 108,
+  "samples_per_box": 20,
+  "metric": "total_energy",
+  "unit": "J",
+  "all_failures_retained": true,
+  "same_y_range_within_workflow_scale": false,
+  "axes": "Independent linear y ranges, common J unit and 10^6 multiplier",
+  "sample_points": "Hidden; all 2160 original energies retained in statistics",
+  "boxplot": "median, IQR, 1.5-IQR whiskers; outlier markers hidden, not observations removed",
+  "palette": {
+    "D3QN+SAC": "#A8C0E4",
+    "DQN-Edge": "#F5AA83",
+    "DReaM-DQN": "#BBDDB2",
+    "OOAC": "#BAE0E3"
+  },
+  "palette_source": "tools/draw_method_framework.py PALETTE; opaque original colors",
+  "sources": [
+    {
+      "run": "ss_37_d3qn_sac",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\ss_37\\comparison_rows.jsonl",
+      "sha256": "da2f274dc54cb8f837b320f08a556d2d0100160fe58a1930b4a2385da80c8faf",
+      "rows": 180
+    },
+    {
+      "run": "ss_37_dqn_edge",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\baselines\\dqn_edge\\comparison_rows.jsonl",
+      "sha256": "083e02ce8c9713ec0090de3eb2a78addfd908e4031539d72ef5a773d5b15ae5f",
+      "rows": 180
+    },
+    {
+      "run": "ss_37_dream_dqn",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\baselines\\dream_dqn\\comparison_rows.jsonl",
+      "sha256": "051eb602137a58fda8f6bdf69c8929955f8e383b48f19c211ff50e7e70b9784f",
+      "rows": 180
+    },
+    {
+      "run": "ss_37_oo_actor_critic",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\baselines\\oo_actor_critic\\comparison_rows.jsonl",
+      "sha256": "136966eec652e33afa92b575daddce2ed02173afc8ef1d84e6b8c3d497fb7d1f",
+      "rows": 180
+    },
+    {
+      "run": "sm_74_d3qn_sac",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sm_74\\comparison_rows.jsonl",
+      "sha256": "1407061c7bf8d7d279f38ea5780db23426ea8d03a2c983e7064599972fa33971",
+      "rows": 180
+    },
+    {
+      "run": "sm_74_dqn_edge",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sm_74_dqn_edge\\comparison_rows.jsonl",
+      "sha256": "b95039dc62578ba837f59d47eb621cb012dc6a7443b3a748f5df185edd7fda55",
+      "rows": 180
+    },
+    {
+      "run": "sm_74_dream_dqn",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sm_74_dream_dqn\\comparison_rows.jsonl",
+      "sha256": "d007b4077f1ad94ba492a5f1e0c68855e6f1c28c97ec1c46c315a401247b7ab3",
+      "rows": 180
+    },
+    {
+      "run": "sm_74_oo_actor_critic",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sm_74_oo_actor_critic\\comparison_rows.jsonl",
+      "sha256": "6f95e9d6d0d3f57194a5ab5f2827bbcfc17522de550ae3ee5470f88bdbade212",
+      "rows": 180
+    },
+    {
+      "run": "sl_111_d3qn_sac",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sl_111\\comparison_rows.jsonl",
+      "sha256": "26828daec131426a6cd4a5721ee446bdb9dd5688c50bbf3c9eb964382cc44804",
+      "rows": 180
+    },
+    {
+      "run": "sl_111_dqn_edge",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sl_111_dqn_edge\\comparison_rows.jsonl",
+      "sha256": "0fa3b576b1c4a6a2cbf9f8f3709d7cf723bd5167dd85db0b35113ba32c951d40",
+      "rows": 180
+    },
+    {
+      "run": "sl_111_dream_dqn",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sl_111_dream_dqn\\comparison_rows.jsonl",
+      "sha256": "ec2e15a0f1fe4e5a7b2f6d21ad0fdeff639abec1e5572da99176cc2f0da45032",
+      "rows": 180
+    },
+    {
+      "run": "sl_111_oo_actor_critic",
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_train_new_eval_20261009\\sl_111_oo_actor_critic\\comparison_rows.jsonl",
+      "sha256": "832995dd5d9c6f03d860e859cdf15d76a1f71419e6c79cce228d8a096359364d",
+      "rows": 180
+    }
+  ]
+}

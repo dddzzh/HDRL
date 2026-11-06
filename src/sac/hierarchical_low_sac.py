@@ -358,6 +358,7 @@ class LowSACActor(nn.Module):
         log_std_max=2.0,
         action_low=0.0,
         action_high=1.0,
+        action_floor_index=None,
     ):
         _require_torch()
         super().__init__()
@@ -368,6 +369,7 @@ class LowSACActor(nn.Module):
         self.log_std_max = float(log_std_max)
         self.action_low = float(action_low)
         self.action_high = float(action_high)
+        self.action_floor_index = action_floor_index
         if not 0.0 <= self.action_low < self.action_high <= 1.0:
             raise ValueError("SAC actor action bounds must satisfy 0 <= low < high <= 1.")
 
@@ -383,12 +385,24 @@ class LowSACActor(nn.Module):
         pre_tanh = mean if deterministic else distribution.rsample()
         squashed = torch.tanh(pre_tanh)
         unit_action = 0.5 * (squashed + 1.0)
-        action_span = self.action_high - self.action_low
-        action = self.action_low + action_span * unit_action
+        action_low = self.action_low
+        if self.action_floor_index is not None:
+            action_low = state[..., self.action_floor_index:self.action_floor_index + 1]
+            if not bool(torch.isfinite(action_low).all()) or bool(
+                ((action_low < self.action_low) | (action_low > self.action_high)).any()
+            ):
+                raise ValueError("SAC state contains an invalid server action floor.")
+        action_span = self.action_high - action_low
+        action = action_low + action_span * unit_action
         log_prob = distribution.log_prob(pre_tanh)
         log_prob -= torch.log(1.0 - squashed.pow(2) + EPS)
         # Change of variables: z -> tanh(z) -> rho in [action_low, action_high].
-        log_prob += np.log(2.0) - np.log(action_span)
+        if self.action_floor_index is None:
+            log_prob += np.log(2.0) - np.log(action_span)
+        else:
+            # A singleton action has no policy entropy and is not trained.
+            log_prob += np.log(2.0) - torch.log(action_span.clamp_min(EPS))
+            log_prob = torch.where(action_span > 0.0, log_prob, torch.zeros_like(log_prob))
         return action, log_prob.sum(dim=-1), mean, log_std
 
 
@@ -411,6 +425,9 @@ class LowLevelDVFSContinuousSACAgent:
         _require_torch()
         config = dict(config or {})
         self.config = copy.deepcopy(config)
+        self.action_mode = str(config.get("action_mode", "legacy_clip")).strip().lower()
+        if self.action_mode not in {"legacy_clip", "server_affine"}:
+            raise ValueError("low SAC action_mode must be 'legacy_clip' or 'server_affine'.")
         self.seed = int(seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -487,6 +504,11 @@ class LowLevelDVFSContinuousSACAgent:
         else:
             self._low_state_dim = int(self.encoder.low_state_dim)
             self._critic_state_dim = self._low_state_dim
+        self._base_low_state_dim = self._low_state_dim
+        if self.action_mode == "server_affine":
+            # Keep the floor in replay, including the next selected server's floor.
+            self._low_state_dim += 1
+            self._critic_state_dim += 1
         self.device = resolve_agent_device(config.get("device", "auto"))
         self.gamma = float(config.get("gamma", 0.99))
         self.tau = float(config.get("tau", 0.005))
@@ -591,6 +613,7 @@ class LowLevelDVFSContinuousSACAgent:
             log_std_max,
             action_low=self.rho_min,
             action_high=1.0,
+            action_floor_index=(self.low_state_dim - 1 if self.action_mode == "server_affine" else None),
         ).to(self.device)
         self.initial_rho_mean = config.get("initial_rho_mean")
         self.initial_log_std = config.get("initial_log_std")
@@ -651,11 +674,29 @@ class LowLevelDVFSContinuousSACAgent:
         return int(self._critic_state_dim)
 
     def build_low_state(self, high_observation, task_index, server_index, safety_metrics=None):
+        state = self._build_base_low_state(
+            high_observation, task_index, server_index, safety_metrics=safety_metrics
+        )
+        if self.action_mode == "server_affine":
+            if safety_metrics is None or "rho_hardware_min" not in safety_metrics:
+                raise ValueError("server_affine requires the environment's rho_hardware_min action floor.")
+            floor = float(safety_metrics["rho_hardware_min"])
+            if not np.isfinite(floor) or not 0.0 <= floor <= 1.0:
+                raise ValueError("Invalid environment action floor.")
+            floor = max(self.rho_min, floor)
+            # Round upward, so float32 cannot generate a rho below the real floor.
+            stored_floor = np.float32(floor)
+            if float(stored_floor) < floor:
+                stored_floor = np.nextafter(stored_floor, np.float32(1.0))
+            state = np.append(state, stored_floor).astype(np.float32)
+        return state
+
+    def _build_base_low_state(self, high_observation, task_index, server_index, safety_metrics=None):
         if self.state_mode == "shared_high_selected_server":
             high_state = np.asarray(
                 high_observation.vector, dtype=np.float32
             ).reshape(-1)
-            expected_high_dim = self.low_state_dim - self.encoder.max_servers
+            expected_high_dim = self._base_low_state_dim - self.encoder.max_servers
             if high_state.size != expected_high_dim:
                 raise ValueError(
                     "shared high observation dimension mismatch: "
@@ -691,7 +732,7 @@ class LowLevelDVFSContinuousSACAgent:
             server_index, list(self.actor_server_feature_indices)
         ]
         result = np.concatenate((local_state, selected_features)).astype(np.float32)
-        if result.shape != (self.actor_state_dim,) or not np.isfinite(result).all():
+        if result.shape != (self._base_low_state_dim,) or not np.isfinite(result).all():
             raise ValueError("Action-conditioned SAC actor state is invalid.")
         return result
 
@@ -740,7 +781,8 @@ class LowLevelDVFSContinuousSACAgent:
             max(self.rho_min, float(safety_metrics.get("rho_hardware_min", self.rho_min))),
         )
         low_action_feasible = bool(safety_metrics.get("low_action_feasible", True))
-        has_action_span = bool(rho_hardware_min < 1.0 - 1e-6)
+        span_floor = float(low_state[-1]) if self.action_mode == "server_affine" else rho_hardware_min
+        has_action_span = bool(span_floor < 1.0 - 1e-6)
         state_tensor = torch.as_tensor(low_state, dtype=torch.float32, device=self.device).unsqueeze(0)
         critic_state_tensor = torch.as_tensor(
             critic_state, dtype=torch.float32, device=self.device
@@ -756,15 +798,14 @@ class LowLevelDVFSContinuousSACAgent:
                         self.critic_2(critic_state_tensor, action_tensor),
                     ).item()
                 )
-            # The SAC action is the actual normalized DVFS frequency rho.
-            # A final clip only enforces the server-specific action floor.
             rho_raw = float(action_tensor.item())
-            rho = float(min(1.0, max(rho_hardware_min, rho_raw)))
-            # The actor's log-prob refers to rho_raw while the environment executes
-            # the clipped rho, so a high binding rate means the actor is being
-            # rewarded for a frequency it never runs at.  Track it: if this stays
-            # small the clip is a harmless guardrail, if it grows the action needs
-            # a per-server affine map instead of a clip.
+            if self.action_mode == "server_affine":
+                if not rho_hardware_min <= rho_raw <= 1.0:
+                    raise ValueError("Affine SAC produced an out-of-range frequency.")
+                rho = rho_raw
+            else:
+                # Historical checkpoint semantics only: learning uses pre-clip samples.
+                rho = float(min(1.0, max(rho_hardware_min, rho_raw)))
             rho_floor_binding = float(rho_raw < rho_hardware_min - 1e-9)
             action_rho = rho
             log_prob_value = float(log_prob.item())
@@ -823,6 +864,18 @@ class LowLevelDVFSContinuousSACAgent:
         critic_state=None,
         next_critic_state=None,
     ):
+        if self.action_mode == "server_affine":
+            for value, label in ((state, "state"), (next_state, "next_state")):
+                array = np.asarray(value)
+                if array.shape != (self.actor_state_dim,) or not np.isfinite(array).all():
+                    raise ValueError(f"Invalid affine SAC {label}.")
+            floor = float(state[-1])
+            if not self.rho_min <= floor < 1.0 - 1e-6:
+                raise ValueError("Affine SAC replay requires a non-degenerate action floor.")
+            if not np.isfinite(action_rho) or not floor <= float(action_rho) <= 1.0:
+                raise ValueError("Affine SAC replay action violates its state-specific floor.")
+            if not done and not self.rho_min <= float(next_state[-1]) < 1.0 - 1e-6:
+                raise ValueError("Affine SAC nonterminal next state needs its own valid floor.")
         self.replay.store_transition(
             state,
             action_rho,
@@ -931,12 +984,24 @@ class LowLevelDVFSContinuousSACAgent:
             importance_weights, dtype=torch.float32, device=self.device
         )
         with torch.no_grad():
-            next_actions, next_log_probs, _, _ = self.actor.sample(next_states_t)
-            next_q = torch.min(
-                self.target_critic_1(next_critic_states_t, next_actions),
-                self.target_critic_2(next_critic_states_t, next_actions),
-            )
-            next_values = next_q - self.alpha * next_log_probs
+            if self.action_mode == "server_affine":
+                # Terminal next states are zero sentinels, not physical states.
+                live = ~dones_t
+                next_values = torch.zeros_like(rewards_t)
+                if bool(live.any()):
+                    next_actions, next_log_probs, _, _ = self.actor.sample(next_states_t[live])
+                    next_q = torch.min(
+                        self.target_critic_1(next_critic_states_t[live], next_actions),
+                        self.target_critic_2(next_critic_states_t[live], next_actions),
+                    )
+                    next_values[live] = next_q - self.alpha * next_log_probs
+            else:
+                next_actions, next_log_probs, _, _ = self.actor.sample(next_states_t)
+                next_q = torch.min(
+                    self.target_critic_1(next_critic_states_t, next_actions),
+                    self.target_critic_2(next_critic_states_t, next_actions),
+                )
+                next_values = next_q - self.alpha * next_log_probs
             target = rewards_t + self.gamma * (~dones_t).float() * next_values
         q1 = self.critic_1(critic_states_t, actions_t)
         q2 = self.critic_2(critic_states_t, actions_t)
@@ -1089,6 +1154,7 @@ class LowLevelDVFSContinuousSACAgent:
 
     def state_dict(self, include_replay=False):
         return {
+            "action_mode": self.action_mode,
             "state_mode": self.state_mode,
             "actor_state_dim": self.actor_state_dim,
             "critic_state_dim": self.critic_state_dim,
@@ -1117,6 +1183,12 @@ class LowLevelDVFSContinuousSACAgent:
         }
 
     def load_state_dict(self, payload):
+        saved_mode = payload.get("action_mode", "legacy_clip")
+        if saved_mode != self.action_mode:
+            raise ValueError(
+                f"SAC action mode mismatch: checkpoint={saved_mode}, agent={self.action_mode}. "
+                "Do not reinterpret legacy weights/replay as an affine policy; train a new model."
+            )
         self.actor.load_state_dict(payload["actor_state_dict"])
         self.critic_1.load_state_dict(payload["critic_1_state_dict"])
         self.critic_2.load_state_dict(payload["critic_2_state_dict"])

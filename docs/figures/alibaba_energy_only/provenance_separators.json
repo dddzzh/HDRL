@@ -1,0 +1,66 @@
+{
+  "dataset": "Alibaba-derived, 111 servers, 100 workflows",
+  "selection_is_conditional": false,
+  "records": 240,
+  "boxes": 12,
+  "samples_per_box": 20,
+  "unit": "J",
+  "methods_left_to_right": [
+    "DQN-Edge",
+    "DReaM-DQN",
+    "OOAC",
+    "CAHDRL"
+  ],
+  "colors": {
+    "DQN-Edge": "#F5AA83",
+    "DReaM-DQN": "#BBDDB2",
+    "OOAC": "#BAE0E3",
+    "CAHDRL": "#A8C0E4"
+  },
+  "retained_observations": "all 240 original energies, no success filtering",
+  "boxplot": "median, IQR, 1.5-IQR whiskers; outlier markers hidden, observations retained",
+  "removed": [
+    "ESP panel",
+    "reliability attainment panel",
+    "bottom explanatory footnote",
+    "subfigure label"
+  ],
+  "original_three_panel_pdf_modified_by_this_script": false,
+  "manuscript_modified_by_this_script": false,
+  "evaluation_plan_sha256": "80b5141707d19519bde5400a6db24094ef61a87c56cb70f9127801c0a2405abf",
+  "sources": [
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\dqn_edge\\comparison_rows.jsonl",
+      "sha256": "360b8164e3da2f34ed60a86d8b80098306f9d6252c5b142660ac08df55c9ff88",
+      "rows": 60
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\dream_dqn\\comparison_rows.jsonl",
+      "sha256": "3266fca444ade1fdd19054f0f4397972179b62d08e565ebec69eda8f6927ca6b",
+      "rows": 60
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\oo_actor_critic\\comparison_rows.jsonl",
+      "sha256": "bdd7ff804daf4491cc39a89d8b10094892284ad33486f3f4d187fe211382b882",
+      "rows": 60
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\d3qn_sac\\comparison_rows.jsonl",
+      "sha256": "3c568f573d810dd9ebdb6d7f68aee5fb42428294846450977f9bd6f1342cb717",
+      "rows": 60
+    }
+  ],
+  "pdf": "D:\\研究生期间\\第二篇\\DRLEC\\output\\pdf\\alibaba_energy_boxplot_separators.pdf",
+  "group_separators": {
+    "enabled": true,
+    "x": [
+      0.5,
+      1.5
+    ],
+    "alpha": 0.28,
+    "axes_height_fraction": [
+      0.1,
+      0.86
+    ]
+  }
+}

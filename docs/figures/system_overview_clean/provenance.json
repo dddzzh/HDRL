@@ -1,0 +1,18 @@
+{
+  "palette": [
+    "#E0EAF6",
+    "#A8C0E4",
+    "#BBDDB2",
+    "#C7C5C6",
+    "#F5AA83",
+    "#BAE0E3"
+  ],
+  "original_icons_reused": false,
+  "task_order": "smallest_workload",
+  "upper": "three independent Q estimators for server selection",
+  "lower": "ordinary SAC with continuous frequency",
+  "source_pdf_unchanged": true,
+  "wireless_scheduling_claimed": false,
+  "backup_claimed": false,
+  "text_overlap_checked": true
+}

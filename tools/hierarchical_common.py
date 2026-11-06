@@ -24,12 +24,10 @@ DEADLINE_TYPES = tuple(sorted(DEADLINE_PROBABILITIES, key=DEADLINE_PROBABILITIES
 def apply_deadline_type(config, deadline_type):
     """Return ``config`` re-targeted at a different Deadline regime.
 
-    Only ``simulation.deadline_type`` changes, and that value is consumed by a
-    single ``rng.random()`` draw per workflow in ``cai_2025_deadline_fields``.
-    For a fixed seed the arrival times, task graphs and HEFT reference
-    makespans are therefore identical across tight/medium/loose: the three
-    regimes are a paired comparison over one set of instances, not three
-    independent samples.
+    Only ``simulation.deadline_type`` changes. The current sec-job generator
+    uses an independent, per-workflow multiplier stream, so arrivals, payloads
+    and the shared FCFS reference stay identical across regimes for a fixed
+    seed and resource pool. Tight/medium/loose are paired comparisons.
     """
     if deadline_type is None:
         return config

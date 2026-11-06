@@ -1,0 +1,67 @@
+{
+  "dataset": "Alibaba-derived, 111 servers, 100 workflows",
+  "selection_is_conditional": false,
+  "records": 240,
+  "boxes": 12,
+  "samples_per_box": 20,
+  "unit": "J",
+  "methods_left_to_right": [
+    "DQN-Edge",
+    "DReaM-DQN",
+    "OOAC",
+    "CAHDRL"
+  ],
+  "colors": {
+    "DQN-Edge": "#D99A5B",
+    "DReaM-DQN": "#83A783",
+    "OOAC": "#A28AA7",
+    "CAHDRL": "#4C78A8"
+  },
+  "retained_observations": "all 240 original energies, no success filtering",
+  "boxplot": "median, IQR, 1.5-IQR whiskers; outlier markers hidden, observations retained",
+  "removed": [
+    "ESP panel",
+    "reliability attainment panel",
+    "bottom explanatory footnote",
+    "subfigure label"
+  ],
+  "original_three_panel_pdf_modified_by_this_script": false,
+  "manuscript_modified_by_this_script": false,
+  "evaluation_plan_sha256": "80b5141707d19519bde5400a6db24094ef61a87c56cb70f9127801c0a2405abf",
+  "sources": [
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\dqn_edge_independent_ema_extra_20261031\\alibaba\\comparison_rows.csv",
+      "sha256": "ef738d400e3c3951bad479eb4956974b012aa77e88707d83dc2ae22eec737ac9",
+      "rows": 60
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\dream_dqn\\comparison_rows.csv",
+      "sha256": "410352a3376b9f4bd48109f689b8025d48462dec1f32c473b24ab663ef410c5b",
+      "rows": 60
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\oo_actor_critic\\comparison_rows.csv",
+      "sha256": "0ebdd846937e3a72ab541d13def439f270fcbee50939f841b55a4d8f4b5c0bf7",
+      "rows": 60
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\alibaba_sl111_100wf_20261015\\d3qn_sac\\comparison_rows.csv",
+      "sha256": "d902990d91d5acee41464d709c4bc9c978ee5f1f4b85e7dbe81d73db7d0929d5",
+      "rows": 60
+    }
+  ],
+  "pdf": "D:\\研究生期间\\第二篇\\DRLEC\\output\\pdf\\alibaba_energy_boxplot_separators_blue_independent_ema.pdf",
+  "group_separators": {
+    "enabled": true,
+    "x": [
+      0.5,
+      1.5
+    ],
+    "alpha": 0.28,
+    "axes_height_fraction": [
+      0.1,
+      0.86
+    ]
+  },
+  "dqn_edge_ema_protocol": "Restore checkpoint EMA before each realization; update within realization"
+}

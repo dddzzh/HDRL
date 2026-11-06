@@ -58,7 +58,7 @@ from src.device_utils import configure_torch_runtime, describe_device
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train D3QN/HEFT high-level + low-level DVFS learner.")
-    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--episodes", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--smoke-test", action="store_true")
@@ -1439,6 +1439,13 @@ def evaluate_agent(
     fixed_low_rho_one=False,
     high_algorithm="d3qn",
 ):
+    workers = int(os.environ.get("DRLEC_EVAL_WORKERS", config.get("training", {}).get("eval_workers", 1)))
+    if workers < 1:
+        raise ValueError("Evaluation workers must be at least one")
+    if workers > 1:
+        from tools.parallel_evaluation import evaluate_parallel
+        return evaluate_parallel(config, resources, agent, objective, seed, eval_episodes,
+                                 workers, smoke_test, fixed_low_rho_one, high_algorithm)
     high_algorithm = _normalize_high_algorithm(high_algorithm)
     rows = []
     old_epsilon = None
@@ -2532,7 +2539,10 @@ def run_training(
                 include_replay=save_replay_buffer,
             )
             write_history_files(output_dir, "train_history", history, rewrite_jsonl=False)
-        if int(training_cfg.get("eval_interval", 20)) > 0 and episode % int(training_cfg.get("eval_interval", 20)) == 0:
+        if int(training_cfg.get("eval_interval", 20)) > 0 and (
+            global_episode % int(training_cfg.get("eval_interval", 20)) == 0
+            or episode == total_episodes
+        ):
             validation_blocks = []
             for block_index, eval_seed in enumerate(eval_seeds):
                 eval_metrics = evaluate_agent(

@@ -1,0 +1,15 @@
+{
+  "dataset": "success_selected_conditional",
+  "raw_records": 2160,
+  "summary_cells": 108,
+  "table_rows": 27,
+  "samples_per_cell": 20,
+  "means_recomputed_from_raw": true,
+  "rates_recomputed_from_raw": true,
+  "figure_energy_sequences_match_raw": true,
+  "source_hashes_verified": true,
+  "figure_provenance": "D:\\研究生期间\\第二篇\\DRLEC\\docs\\figures\\current_generalization_energy\\success_selected\\refined_figure_provenance.json",
+  "source_summary": "D:\\研究生期间\\第二篇\\DRLEC\\results\\success_seed_screening_20261013\\exports\\paired_energy_summary.csv",
+  "source_rows": "D:\\研究生期间\\第二篇\\DRLEC\\results\\success_seed_screening_20261013\\exports\\paired_energy_rows.csv",
+  "main2_sha256": "0365f80e2fcf95a71f8c127bd5fbefec02ca183e18604ede63012626ca7db7c6"
+}

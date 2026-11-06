@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import io
 import json
 import math
+import multiprocessing
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +33,6 @@ from src.baselines.dream.dream_config import DReaMConfig
 from src.baselines.dream.dream_reward import SharedWorkflowReward
 from src.baselines.dream.dream_state import SharedEdgeCloudStateBuilder
 from src.baselines.dqn_edge import DQNEdgeConfig
-from src.baselines.hirl import HIRLAgent, HIRLConfig, HIRLScheduler
 from src.ppo.hierarchical_state import (
     HierarchicalStateEncoder as LegacyHierarchicalStateEncoder,
 )
@@ -55,7 +57,7 @@ from tools.train_dqn_edge import (
     build_dqn_edge_runtime,
     run_episode as run_dqn_edge_episode,
 )
-from tools.train_hirl import run_episode as run_hirl_episode
+from tools.evaluation_seed_schedule import resolve_seed_schedule
 
 
 DEFAULT_D3QN_CHECKPOINT = (
@@ -69,19 +71,17 @@ DEFAULT_DREAM_CONFIG = "configs/dream_dqn.json"
 DEFAULT_DREAM_CHECKPOINT = "results/dream_dqn/best_checkpoint.pt"
 DEFAULT_DQN_EDGE_CONFIG = "configs/dqn_edge_small_20edge_6cloud.json"
 DEFAULT_DQN_EDGE_CHECKPOINT = "results/dqn_edge/best_checkpoint.pt"
-DEFAULT_HIRL_CONFIG = "configs/hirl_td3_ddqn.json"
-DEFAULT_HIRL_CHECKPOINT = "results/hirl_td3_ddqn/best_checkpoint.pt"
 DEFAULT_MODES = (
     "d3qn_sac",
     "oo_actor_critic",
     "dream_dqn",
     "dqn_edge",
-    "hirl_td3_ddqn",
     "heft_sac",
     "fcfs_sac",
     "fastest_sac",
     "random_sac",
 )
+SUPPORTED_MODES = (*DEFAULT_MODES, "heft_rho1")
 
 DATASET_SCALE_NAMES = {
     "small": "small",
@@ -91,6 +91,7 @@ DATASET_SCALE_NAMES = {
 MODE_TO_HIGH_ALGORITHM = {
     "d3qn_sac": "d3qn",
     "heft_sac": "heft",
+    "heft_rho1": "heft",
     "fcfs_sac": "fcfs",
     "fastest_sac": "fastest",
     "random_sac": "random",
@@ -117,7 +118,7 @@ def parse_args():
             "Fastest+SAC and Random+SAC on paired Pegasus workflow seeds."
         )
     )
-    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud.json")
+    parser.add_argument("--config", default="configs/v2_small_20edge_6cloud_dvfs_v3_future_esp.json")
     parser.add_argument("--d3qn-checkpoint", default=DEFAULT_D3QN_CHECKPOINT)
     parser.add_argument("--oo-config", default=DEFAULT_OO_CONFIG)
     parser.add_argument("--oo-checkpoint", default=DEFAULT_OO_CHECKPOINT)
@@ -125,8 +126,6 @@ def parse_args():
     parser.add_argument("--dream-checkpoint", default=DEFAULT_DREAM_CHECKPOINT)
     parser.add_argument("--dqn-edge-config", default=DEFAULT_DQN_EDGE_CONFIG)
     parser.add_argument("--dqn-edge-checkpoint", default=DEFAULT_DQN_EDGE_CHECKPOINT)
-    parser.add_argument("--hirl-config", default=DEFAULT_HIRL_CONFIG)
-    parser.add_argument("--hirl-checkpoint", default=DEFAULT_HIRL_CHECKPOINT)
     parser.add_argument("--scales", default="small,medium")
     parser.add_argument(
         "--deadline-types",
@@ -143,6 +142,10 @@ def parse_args():
     parser.add_argument("--modes", default=",".join(DEFAULT_MODES))
     parser.add_argument("--seed-start", type=int, default=342000)
     parser.add_argument("--num-seeds", type=int, default=20)
+    parser.add_argument("--seed-schedule", default=None,
+                        help="JSON containing ordered, unique real seeds for each scale/deadline.")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Independent seed processes (one D3QN+SAC or DReaM mode).")
     parser.add_argument(
         "--ready-task-order",
         choices=("upward_rank", "smallest_workload"),
@@ -271,7 +274,10 @@ def add_normalized_metrics(metrics, num_workflows):
     return result
 
 
-def run_d3qn_family(config, resources, agent, objective, seed, high_algorithm):
+def run_d3qn_family(
+    config, resources, agent, objective, seed, high_algorithm,
+    fixed_low_rho_one=False,
+):
     workflows = build_workflows(config, resources, seed, smoke_test=False)
     env = build_env(workflows, resources, dict(config.get("simulation", {})), seed)
     result = collect_d3qn_episode(
@@ -283,10 +289,36 @@ def run_d3qn_family(config, resources, agent, objective, seed, high_algorithm):
         training=False,
         high_deterministic=True,
         low_deterministic=True,
-        fixed_low_rho_one=False,
+        fixed_low_rho_one=fixed_low_rho_one,
         high_algorithm=high_algorithm,
     )
     return result["metrics"]
+
+
+def _initialize_d3qn_evaluation(checkpoint, config, resources, seed):
+    global _d3qn_evaluation_runtime
+    from src.device_utils import configure_torch_runtime
+    configure_torch_runtime(1)
+    _, _, agent, objective = load_d3qn(checkpoint, seed)
+    _d3qn_evaluation_runtime = (config, resources, agent, objective)
+
+
+def _evaluate_d3qn_seed(seed):
+    config, resources, agent, objective = _d3qn_evaluation_runtime
+    with redirect_stdout(io.StringIO()):
+        return run_d3qn_family(config, resources, agent, objective, seed, "d3qn")
+
+
+def parallel_d3qn_results(checkpoint, config, resources, seeds, workers, model_seed):
+    seeds = list(seeds)
+    if not seeds:
+        return
+    with ProcessPoolExecutor(
+            max_workers=min(workers, len(seeds)),
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_d3qn_evaluation,
+            initargs=(checkpoint, config, resources, model_seed)) as pool:
+        yield from zip(seeds, pool.map(_evaluate_d3qn_seed, seeds))
 
 
 def run_oo(config, resources, encoder, agent, objective, deadline_weight, seed):
@@ -342,6 +374,32 @@ def run_dream(config, resources, scheduler, seed):
     }
 
 
+def _initialize_dream_evaluation(checkpoint, training_config, config, resources, seed):
+    global _dream_evaluation_runtime
+    from src.device_utils import configure_torch_runtime
+    configure_torch_runtime(1)
+    _, scheduler = load_dream(training_config, checkpoint, resources, seed)
+    _dream_evaluation_runtime = (config, resources, scheduler)
+
+
+def _evaluate_dream_seed(seed):
+    config, resources, scheduler = _dream_evaluation_runtime
+    with redirect_stdout(io.StringIO()):
+        return run_dream(config, resources, scheduler, seed)
+
+
+def parallel_dream_results(checkpoint, training_config, config, resources, seeds, workers, model_seed):
+    seeds = list(seeds)
+    if not seeds:
+        return
+    with ProcessPoolExecutor(
+            max_workers=min(workers, len(seeds)),
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_dream_evaluation,
+            initargs=(checkpoint, training_config, config, resources, model_seed)) as pool:
+        yield from zip(seeds, pool.map(_evaluate_dream_seed, seeds))
+
+
 def load_dqn_edge(config, checkpoint_path, resources, seed):
     payload = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
     values = dict(payload.get("config", config.get("agent", {}).get("dqn_edge", {})))
@@ -394,42 +452,6 @@ def run_dqn_edge(config, resources, runtime, seed):
     }
 
 
-def load_hirl(config, checkpoint_path, resources, seed):
-    payload = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
-    checkpoint_config = copy.deepcopy(payload.get("experiment_config") or config)
-    state_cfg = dict(checkpoint_config.get("agent", {}).get("shared", {}).get("state", {}))
-    state_cfg["max_servers"] = len(resources.get("servers", []))
-    builder = SharedEdgeCloudStateBuilder(state_cfg)
-    values = dict(checkpoint_config.get("agent", {}).get("hirl", {}))
-    values.update(seed=seed, device="cuda" if torch.cuda.is_available() else "cpu")
-    agent = HIRLAgent(
-        builder.state_dim,
-        len(resources["servers"]),
-        HIRLConfig.from_mapping(values),
-    )
-    agent.load_checkpoint(payload, load_replay=False)
-    return payload, checkpoint_config, HIRLScheduler(agent, builder)
-
-
-def run_hirl(config, resources, scheduler, seed):
-    workflows = build_workflows(config, resources, seed, smoke_test=False)
-    env = build_env(
-        workflows, resources,
-        {**config.get("simulation", {}), "enable_backup_duplication": False}, seed,
-    )
-    result = run_hirl_episode(env, scheduler, training=False)
-    return {
-        "total_energy": result["total_energy"],
-        "average_response_time": result["avg_workflow_response_time"],
-        "episode_makespan": result["episode_makespan"],
-        "deadline_success_rate": result["deadline_success_rate"],
-        "reliability_success_rate": result["reliability_success_rate"],
-        "avg_workflow_reliability": result["avg_workflow_reliability"],
-        "rho_mean": result["rho_mean"],
-        "steps": result["steps"],
-    }
-
-
 def summarize_rows(rows):
     grouped = {}
     for row in rows:
@@ -460,6 +482,15 @@ def summarize_rows(rows):
                 ),
                 "reliability_satisfaction": satisfaction_statistics(
                     row["reliability_success_rate"] for row in group
+                ),
+                "joint_esp_0p90": float(
+                    np.mean(
+                        [
+                            float(row["deadline_success_rate"]) >= 0.90 - 1e-9
+                            and float(row["reliability_success_rate"]) >= 1.0 - 1e-9
+                            for row in group
+                        ]
+                    )
                 ),
             }
         )
@@ -504,9 +535,12 @@ def json_ready(value):
 
 
 def write_rows(output_dir, rows):
-    with (output_dir / "comparison_rows.jsonl").open("w", encoding="utf-8") as file:
+    rows_path = output_dir / "comparison_rows.jsonl"
+    temporary_path = rows_path.with_suffix(".jsonl.tmp")
+    with temporary_path.open("w", encoding="utf-8") as file:
         for row in rows:
             file.write(json.dumps(json_ready(row), ensure_ascii=False) + "\n")
+    temporary_path.replace(rows_path)
     scalar_rows = []
     for row in rows:
         scalar_rows.append(
@@ -556,6 +590,14 @@ def write_summary(output_dir, summaries, paired_deltas):
             csv_rows.append({**base, "metric": "deadline_cvar25",
                              "n": satisfaction["n"], "mean": satisfaction["cvar"],
                              "min": satisfaction["min"]})
+        reliability = row.get("reliability_satisfaction") or {}
+        if reliability:
+            csv_rows.append({**base, "metric": "reliability_esp@1.00",
+                             "n": reliability["n"],
+                             "mean": reliability.get("esp", {}).get("1.00")})
+        csv_rows.append({**base, "metric": "joint_esp@0.90",
+                         "n": satisfaction.get("n"),
+                         "mean": row.get("joint_esp_0p90")})
     fields = [
         "scale",
         "deadline_type",
@@ -583,14 +625,14 @@ def write_summary(output_dir, summaries, paired_deltas):
         "oo_actor_critic": "OO Actor-Critic",
         "dream_dqn": "Adapted DReaM-DQN",
         "dqn_edge": "Adapted DQN-Edge",
-        "hirl_td3_ddqn": "Adapted HIRL (TD3+DDQN)",
         "heft_sac": "HEFT+SAC",
+        "heft_rho1": r"HEFT+$\rho$=1",
         "fcfs_sac": "FCFS+SAC",
         "fastest_sac": "Fastest+SAC",
         "random_sac": "Random+SAC",
     }
     lines = [
-        "# Small/Medium 20-seed comparison",
+        "# Baseline comparison across evaluation seeds",
         "",
         "Energy is the complete-system total, averaged over evaluation seeds.",
         "Positive delta means more energy than D3QN+SAC.",
@@ -608,9 +650,10 @@ def write_summary(output_dir, summaries, paired_deltas):
                 f"## {scale} / deadline={deadline_type} "
                 f"(P(2x)={probability:.1f}, P(3x)={1.0 - probability:.1f})",
                 "",
-                "| Method | Energy (kJ) | Delta vs ours | Deadline | ESP@0.92 "
-                "| ESP@0.95 | CVaR25 | min | Reliability | Response (s) | rho |",
-                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+                "| Method | Energy (kJ) | Delta vs ours | Deadline | ESP@0.90 "
+                "| CVaR25 | min | Reliability | Rel-ESP@1.00 | Joint@0.90 "
+                "| Response (s) | rho |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
         scale_rows = [
@@ -625,17 +668,19 @@ def write_summary(output_dir, summaries, paired_deltas):
             rho = metrics.get("rho_mean", {}).get("mean")
             rho_text = "--" if rho is None else f"{rho:.3f}"
             satisfaction = row.get("deadline_satisfaction") or {}
+            reliability = row.get("reliability_satisfaction") or {}
             esp = satisfaction.get("esp", {})
             lines.append(
                 f"| {labels.get(row['mode'], row['mode'])} "
                 f"| {metrics['total_energy']['mean'] / 1000.0:.2f} "
                 f"| {delta_text} "
                 f"| {metrics['deadline_success_rate']['mean']:.2%} "
-                f"| {esp.get('0.92', float('nan')):.2f} "
-                f"| {esp.get('0.95', float('nan')):.2f} "
+                f"| {esp.get('0.90', float('nan')):.2f} "
                 f"| {satisfaction.get('cvar', float('nan')):.3f} "
                 f"| {satisfaction.get('min', float('nan')):.3f} "
                 f"| {metrics['reliability_success_rate']['mean']:.2%} "
+                f"| {reliability.get('esp', {}).get('1.00', float('nan')):.2f} "
+                f"| {row.get('joint_esp_0p90', float('nan')):.2f} "
                 f"| {metrics['average_response_time']['mean']:.2f} "
                 f"| {rho_text} |"
             )
@@ -647,12 +692,14 @@ def evaluate(args):
     config = load_json(args.config)
     if args.ready_task_order is not None:
         config.setdefault("simulation", {})["ready_task_order"] = args.ready_task_order
-    oo_config = load_json(args.oo_config)
-    dream_config = load_json(args.dream_config)
-    dqn_edge_config = load_json(args.dqn_edge_config)
-    hirl_config = load_json(args.hirl_config)
     scales = parse_csv_values(args.scales, {"small", "medium", "large"}, "scale")
-    modes = parse_csv_values(args.modes, set(DEFAULT_MODES), "mode")
+    modes = parse_csv_values(args.modes, set(SUPPORTED_MODES), "mode")
+    workers = int(getattr(args, "workers", 1))
+    if workers < 1 or (workers > 1 and modes not in (["d3qn_sac"], ["dream_dqn"])):
+        raise ValueError("workers must be positive; parallel evaluation requires one d3qn_sac or dream_dqn mode")
+    oo_config = load_json(args.oo_config) if "oo_actor_critic" in modes else {}
+    dream_config = load_json(args.dream_config) if "dream_dqn" in modes else {}
+    dqn_edge_config = load_json(args.dqn_edge_config) if "dqn_edge" in modes else {}
     if args.deadline_types is None:
         deadline_types = [config_deadline_type(config)]
     else:
@@ -663,6 +710,15 @@ def evaluate(args):
         raise ValueError("--num-seeds must be positive.")
     if args.smoke_test:
         args.num_seeds = 1
+
+    schedule_path = getattr(args, "seed_schedule", None)
+    seed_schedule = resolve_seed_schedule(
+        resolve_path(schedule_path) if schedule_path else None,
+        scales, deadline_types, int(args.seed_start), int(args.num_seeds))
+    if schedule_path and args.output_dir:
+        previous_rows = resolve_path(args.output_dir) / "comparison_rows.jsonl"
+        if previous_rows.exists() and previous_rows.stat().st_size:
+            raise ValueError("Explicit-seed evaluation must start fresh; sequential policy state is not restored")
 
     server_seed = int(config.get("training", {}).get("seed", 42))
     with redirect_stdout(io.StringIO()):
@@ -702,12 +758,6 @@ def evaluate(args):
             resources,
             args.seed_start,
         )
-    hirl_payload = hirl_checkpoint_config = hirl_scheduler = None
-    if "hirl_td3_ddqn" in modes:
-        hirl_payload, hirl_checkpoint_config, hirl_scheduler = load_hirl(
-            hirl_config, resolve_path(args.hirl_checkpoint), resources, args.seed_start
-        )
-
     if args.output_dir:
         output_dir = resolve_path(args.output_dir)
     else:
@@ -734,10 +784,6 @@ def evaluate(args):
         "dqn_edge_checkpoint": str(resolve_path(args.dqn_edge_checkpoint)),
         "dqn_edge_checkpoint_episode": int((dqn_edge_payload or {}).get("episode", 0)),
         "dqn_edge_variant": (dqn_edge_runtime or {}).get("variant"),
-        "hirl_config": str(resolve_path(args.hirl_config)),
-        "hirl_checkpoint": str(resolve_path(args.hirl_checkpoint)),
-        "hirl_checkpoint_episode": int((hirl_payload or {}).get("episode", 0)),
-        "hirl_adaptation": (hirl_checkpoint_config or {}).get("adaptation", {}),
         "server_seed": server_seed,
         "workflow_seed_start": int(args.seed_start),
         "workflow_seed_end": int(args.seed_start + args.num_seeds - 1),
@@ -746,12 +792,18 @@ def evaluate(args):
         "deadline_types": deadline_types,
         "config_deadline_type": config_deadline_type(config),
         "modes": modes,
+        "workers": workers,
         "num_workflows": int(config.get("generator", {}).get("num_workflows", 20)),
         "ready_task_order": str(
             config.get("simulation", {}).get("ready_task_order", "smallest_workload")
         ),
         "heuristic_dvfs": "same deterministic SAC loaded from the D3QN checkpoint",
     }
+    if schedule_path:
+        manifest.update(evaluation_seed_schedule=seed_schedule,
+                        evaluation_seed_schedule_sha256=hashlib.sha256(
+                            resolve_path(schedule_path).read_bytes()).hexdigest(),
+                        model_initialization_seed=int(args.seed_start))
     (output_dir / "experiment_manifest.json").write_text(
         json.dumps(json_ready(manifest), ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -771,7 +823,7 @@ def evaluate(args):
                 row.get("scale") in scales
                 and row.get("mode") in modes
                 and row.get("deadline_type") in deadline_types
-                and int(args.seed_start) <= int(row.get("eval_seed", -1)) < seed_end
+                and int(row.get("eval_seed", -1)) in seed_schedule[row["scale"]][row["deadline_type"]]
             ):
                 rows.append(row)
         if rows:
@@ -794,13 +846,33 @@ def evaluate(args):
                 f"[scale] {scale} deadline={deadline_type} workflows={num_workflows} "
                 f"seeds={args.seed_start}-{args.seed_start + args.num_seeds - 1}"
             )
-            for offset in range(int(args.num_seeds)):
-                eval_seed = int(args.seed_start + offset)
+            seeds = seed_schedule[scale][deadline_type]
+            if schedule_path:
+                print(f"[seed-schedule] scale={scale} deadline={deadline_type} ordered_seeds={seeds}", flush=True)
+            if workers > 1:
+                parallel_mode = modes[0]
+                pending = [seed for seed in seeds
+                           if (scale, deadline_type, parallel_mode, seed) not in completed]
+                print(f"[eval-parallel] workers={min(workers, len(pending))} "
+                      f"pending={len(pending)} frozen_model=True", flush=True)
+                if parallel_mode == "dream_dqn":
+                    results = parallel_dream_results(
+                        resolve_path(args.dream_checkpoint), dream_config, scenario,
+                        resources, pending, workers, args.seed_start)
+                else:
+                    results = parallel_d3qn_results(
+                        resolve_path(args.d3qn_checkpoint), scenario, resources,
+                        pending, workers, args.seed_start)
+            else:
+                results = ((seed, None) for seed in seeds)
+            for eval_seed, parallel_metrics in results:
                 for mode in modes:
                     if (scale, deadline_type, mode, eval_seed) in completed:
                         continue
                     with redirect_stdout(io.StringIO()):
-                        if mode == "oo_actor_critic":
+                        if parallel_metrics is not None:
+                            metrics = parallel_metrics
+                        elif mode == "oo_actor_critic":
                             metrics = run_oo(
                                 scenario,
                                 resources,
@@ -814,10 +886,6 @@ def evaluate(args):
                             metrics = run_dream(
                                 scenario, resources, dream_scheduler, eval_seed
                             )
-                        elif mode == "hirl_td3_ddqn":
-                            metrics = run_hirl(
-                                scenario, resources, hirl_scheduler, eval_seed
-                            )
                         elif mode == "dqn_edge":
                             metrics = run_dqn_edge(
                                 scenario, resources, dqn_edge_runtime, eval_seed
@@ -830,6 +898,7 @@ def evaluate(args):
                                 d3qn_objective,
                                 eval_seed,
                                 MODE_TO_HIGH_ALGORITHM[mode],
+                                fixed_low_rho_one=(mode == "heft_rho1"),
                             )
                     metrics = add_normalized_metrics(metrics, num_workflows)
                     row = {

@@ -1,0 +1,421 @@
+\documentclass[10pt]{article}
+\usepackage[letterpaper,textwidth=7.16in,textheight=9.2in]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\setlength{\parindent}{0pt}
+\begin{document}
+\section*{Complete tables: outcome-selected paired panel}
+Formatting preview only. All success rates refer to the selected seed lists, not to an unfiltered test population.
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired evaluation under loose deadlines across nine workflow--resource configurations.}
+\label{tab:conditional_full_loose}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Scenario & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+SS & \shortstack[r]{\textbf{203652.44}\\$\pm 7814.71$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1321555.98\\$\pm 22508.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{473870.20\\$\pm 16366.66$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{589711.61\\$\pm 11855.80$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+SM & \shortstack[r]{\textbf{340859.56}\\$\pm 13517.62$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{505914.34\\$\pm 38839.52$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{417293.64\\$\pm 20813.27$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{530168.46\\$\pm 11685.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+SL & \shortstack[r]{\textbf{335863.95}\\$\pm 11780.54$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{411518.82\\$\pm 40618.57$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{429313.94\\$\pm 14964.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{479308.79\\$\pm 13864.50$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+MS & \shortstack[r]{\textbf{344716.39}\\$\pm 20669.28$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1894241.49\\$\pm 78334.26$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{696172.02\\$\pm 38866.10$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{839107.20\\$\pm 35661.10$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+MM & \shortstack[r]{\textbf{560295.38}\\$\pm 34410.47$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{863813.01\\$\pm 69649.74$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{684707.40\\$\pm 44207.40$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{811339.37\\$\pm 42406.05$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+ML & \shortstack[r]{\textbf{556717.69}\\$\pm 29715.54$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{844476.48\\$\pm 115536.83$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{670270.00\\$\pm 38729.20$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{732307.94\\$\pm 37138.29$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LS & \shortstack[r]{\textbf{623185.30}\\$\pm 51338.65$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2758100.76\\$\pm 182859.24$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1108471.58\\$\pm 75466.56$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1215980.16\\$\pm 74336.43$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LM & \shortstack[r]{\textbf{978556.45}\\$\pm 88954.94$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1539454.21\\$\pm 138207.80$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1210146.44\\$\pm 102319.75$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1226997.61\\$\pm 86163.69$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LL & \shortstack[r]{\textbf{954653.23}\\$\pm 81731.46$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1857013.44\\$\pm 215924.23$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1114907.05\\$\pm 84717.67$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1115725.90\\$\pm 74657.43$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+\clearpage
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired evaluation under medium deadlines across nine workflow--resource configurations.}
+\label{tab:conditional_full_medium}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Scenario & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+SS & \shortstack[r]{\textbf{218243.84}\\$\pm 9927.97$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1338049.83\\$\pm 23230.55$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{475313.65\\$\pm 15346.00$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{588235.39\\$\pm 13025.78$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+SM & \shortstack[r]{\textbf{358003.88}\\$\pm 15724.41$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{619338.76\\$\pm 54317.77$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{454267.96\\$\pm 23245.74$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{537874.52\\$\pm 12365.93$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+SL & \shortstack[r]{\textbf{350697.35}\\$\pm 13079.52$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{506880.36\\$\pm 58212.44$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{454737.10\\$\pm 16374.96$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{490943.55\\$\pm 14136.35$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+MS & \shortstack[r]{\textbf{366294.87}\\$\pm 20757.51$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1913046.99\\$\pm 76726.44$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{707317.46\\$\pm 37794.91$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{834874.70\\$\pm 35169.73$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+MM & \shortstack[r]{\textbf{583054.23}\\$\pm 33692.76$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{993650.58\\$\pm 65667.76$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{738756.87\\$\pm 41524.88$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{824301.58\\$\pm 41352.31$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+ML & \shortstack[r]{\textbf{576183.85}\\$\pm 30838.58$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1007449.20\\$\pm 109165.04$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{701604.89\\$\pm 38080.98$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{743138.78\\$\pm 36152.36$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LS & \shortstack[r]{\textbf{653612.95}\\$\pm 49052.04$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2792701.53\\$\pm 143171.34$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1124347.23\\$\pm 74888.39$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1229175.69\\$\pm 67602.11$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LM & \shortstack[r]{\textbf{1017054.38}\\$\pm 92492.51$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1699742.22\\$\pm 145981.53$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1265608.87\\$\pm 117187.16$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1245428.81\\$\pm 88179.39$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LL & \shortstack[r]{\textbf{989418.92}\\$\pm 72920.48$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2080944.81\\$\pm 238625.00$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1155260.72\\$\pm 90282.37$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1131757.09\\$\pm 70703.44$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+\clearpage
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired evaluation under tight deadlines across nine workflow--resource configurations.}
+\label{tab:conditional_full_tight}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Scenario & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+SS & \shortstack[r]{\textbf{230355.12}\\$\pm 9584.08$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1355768.62\\$\pm 25294.88$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{471782.52\\$\pm 16369.17$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{581320.19\\$\pm 12786.68$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+SM & \shortstack[r]{\textbf{378345.50}\\$\pm 14164.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{728377.93\\$\pm 45830.22$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{486006.87\\$\pm 20704.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{546672.01\\$\pm 14799.51$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+SL & \shortstack[r]{\textbf{365073.38}\\$\pm 13231.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{584459.88\\$\pm 51429.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{478875.89\\$\pm 16038.61$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{502226.99\\$\pm 13558.24$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+MS & \shortstack[r]{\textbf{386989.97}\\$\pm 21397.28$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1938476.15\\$\pm 78909.06$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{713097.77\\$\pm 39105.86$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{828253.43\\$\pm 32286.92$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+MM & \shortstack[r]{\textbf{607135.01}\\$\pm 35216.03$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1107208.50\\$\pm 67353.78$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{786823.28\\$\pm 42670.14$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{837505.05\\$\pm 42634.13$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+ML & \shortstack[r]{\textbf{597951.23}\\$\pm 29749.20$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1152451.53\\$\pm 109423.81$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{739431.62\\$\pm 38715.96$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{754851.57\\$\pm 36646.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LS & \shortstack[r]{\textbf{672830.18}\\$\pm 58756.09$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2741273.51\\$\pm 160717.75$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1134163.34\\$\pm 86377.58$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1205793.07\\$\pm 81358.69$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LM & \shortstack[r]{\textbf{1056995.71}\\$\pm 90261.59$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1846833.75\\$\pm 154817.58$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1326249.57\\$\pm 114541.35$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1262787.30\\$\pm 87212.99$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+LL & \shortstack[r]{\textbf{1006236.73}\\$\pm 72161.22$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2247471.09\\$\pm 234350.30$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1183675.87\\$\pm 78312.93$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1129572.51\\$\pm 66588.66$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+\clearpage
+\section*{Scenario-wise alternative}
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for SS: small workflows on 37 servers.}
+\label{tab:conditional_case_ss}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{203652.44}\\$\pm 7814.71$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1321555.98\\$\pm 22508.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{473870.20\\$\pm 16366.66$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{589711.61\\$\pm 11855.80$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{218243.84}\\$\pm 9927.97$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1338049.83\\$\pm 23230.55$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{475313.65\\$\pm 15346.00$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{588235.39\\$\pm 13025.78$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{230355.12}\\$\pm 9584.08$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1355768.62\\$\pm 25294.88$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{471782.52\\$\pm 16369.17$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{581320.19\\$\pm 12786.68$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{SS scenario.}
+Table~\ref{tab:conditional_case_ss} reports the SS conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 203652.44, 218243.84, 230355.12~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 57.02\%, 54.08\%, 51.17\%. The mean energy of D3QN+SAC increases by 13.11\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for SM: small workflows on 74 servers.}
+\label{tab:conditional_case_sm}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{340859.56}\\$\pm 13517.62$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{505914.34\\$\pm 38839.52$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{417293.64\\$\pm 20813.27$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{530168.46\\$\pm 11685.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{358003.88}\\$\pm 15724.41$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{619338.76\\$\pm 54317.77$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{454267.96\\$\pm 23245.74$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{537874.52\\$\pm 12365.93$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{378345.50}\\$\pm 14164.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{728377.93\\$\pm 45830.22$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{486006.87\\$\pm 20704.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{546672.01\\$\pm 14799.51$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{SM scenario.}
+Table~\ref{tab:conditional_case_sm} reports the SM conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 340859.56, 358003.88, 378345.50~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 18.32\%, 21.19\%, 22.15\%. The mean energy of D3QN+SAC increases by 11.00\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+\clearpage
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for SL: small workflows on 111 servers.}
+\label{tab:conditional_case_sl}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{335863.95}\\$\pm 11780.54$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{411518.82\\$\pm 40618.57$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{429313.94\\$\pm 14964.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{479308.79\\$\pm 13864.50$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{350697.35}\\$\pm 13079.52$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{506880.36\\$\pm 58212.44$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{454737.10\\$\pm 16374.96$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{490943.55\\$\pm 14136.35$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{365073.38}\\$\pm 13231.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{584459.88\\$\pm 51429.45$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{478875.89\\$\pm 16038.61$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{502226.99\\$\pm 13558.24$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{SL scenario.}
+Table~\ref{tab:conditional_case_sl} reports the SL conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 335863.95, 350697.35, 365073.38~J, respectively. Relative to the lowest-energy baseline in each regime (DQN-Edge, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 18.38\%, 22.88\%, 23.76\%. The mean energy of D3QN+SAC increases by 8.70\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for MS: medium workflows on 37 servers.}
+\label{tab:conditional_case_ms}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{344716.39}\\$\pm 20669.28$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1894241.49\\$\pm 78334.26$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{696172.02\\$\pm 38866.10$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{839107.20\\$\pm 35661.10$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{366294.87}\\$\pm 20757.51$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1913046.99\\$\pm 76726.44$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{707317.46\\$\pm 37794.91$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{834874.70\\$\pm 35169.73$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{386989.97}\\$\pm 21397.28$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1938476.15\\$\pm 78909.06$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{713097.77\\$\pm 39105.86$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{828253.43\\$\pm 32286.92$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{MS scenario.}
+Table~\ref{tab:conditional_case_ms} reports the MS conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 344716.39, 366294.87, 386989.97~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 50.48\%, 48.21\%, 45.73\%. The mean energy of D3QN+SAC increases by 12.26\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+\clearpage
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for MM: medium workflows on 74 servers.}
+\label{tab:conditional_case_mm}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{560295.38}\\$\pm 34410.47$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{863813.01\\$\pm 69649.74$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{684707.40\\$\pm 44207.40$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{811339.37\\$\pm 42406.05$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{583054.23}\\$\pm 33692.76$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{993650.58\\$\pm 65667.76$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{738756.87\\$\pm 41524.88$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{824301.58\\$\pm 41352.31$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{607135.01}\\$\pm 35216.03$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1107208.50\\$\pm 67353.78$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{786823.28\\$\pm 42670.14$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{837505.05\\$\pm 42634.13$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{MM scenario.}
+Table~\ref{tab:conditional_case_mm} reports the MM conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 560295.38, 583054.23, 607135.01~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 18.17\%, 21.08\%, 22.84\%. The mean energy of D3QN+SAC increases by 8.36\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for ML: medium workflows on 111 servers.}
+\label{tab:conditional_case_ml}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{556717.69}\\$\pm 29715.54$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{844476.48\\$\pm 115536.83$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{670270.00\\$\pm 38729.20$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{732307.94\\$\pm 37138.29$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{576183.85}\\$\pm 30838.58$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1007449.20\\$\pm 109165.04$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{701604.89\\$\pm 38080.98$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{743138.78\\$\pm 36152.36$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{597951.23}\\$\pm 29749.20$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1152451.53\\$\pm 109423.81$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{739431.62\\$\pm 38715.96$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{754851.57\\$\pm 36646.90$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{ML scenario.}
+Table~\ref{tab:conditional_case_ml} reports the ML conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 556717.69, 576183.85, 597951.23~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 16.94\%, 17.88\%, 19.13\%. The mean energy of D3QN+SAC increases by 7.41\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+\clearpage
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for LS: large workflows on 37 servers.}
+\label{tab:conditional_case_ls}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{623185.30}\\$\pm 51338.65$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2758100.76\\$\pm 182859.24$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1108471.58\\$\pm 75466.56$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1215980.16\\$\pm 74336.43$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{653612.95}\\$\pm 49052.04$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2792701.53\\$\pm 143171.34$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1124347.23\\$\pm 74888.39$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1229175.69\\$\pm 67602.11$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{672830.18}\\$\pm 58756.09$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2741273.51\\$\pm 160717.75$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1134163.34\\$\pm 86377.58$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1205793.07\\$\pm 81358.69$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{LS scenario.}
+Table~\ref{tab:conditional_case_ls} reports the LS conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 623185.30, 653612.95, 672830.18~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, DReaM-DQN, DReaM-DQN in the same order), the corresponding energy reductions are 43.78\%, 41.87\%, 40.68\%. The mean energy of D3QN+SAC increases by 7.97\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for LM: large workflows on 74 servers.}
+\label{tab:conditional_case_lm}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{978556.45}\\$\pm 88954.94$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1539454.21\\$\pm 138207.80$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1210146.44\\$\pm 102319.75$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1226997.61\\$\pm 86163.69$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{1017054.38}\\$\pm 92492.51$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1699742.22\\$\pm 145981.53$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1265608.87\\$\pm 117187.16$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1245428.81\\$\pm 88179.39$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{1056995.71}\\$\pm 90261.59$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1846833.75\\$\pm 154817.58$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1326249.57\\$\pm 114541.35$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1262787.30\\$\pm 87212.99$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{LM scenario.}
+Table~\ref{tab:conditional_case_lm} reports the LM conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 978556.45, 1017054.38, 1056995.71~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, OOAC, OOAC in the same order), the corresponding energy reductions are 19.14\%, 18.34\%, 16.30\%. The mean energy of D3QN+SAC increases by 8.02\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+\clearpage
+
+\begin{table*}[!htbp]
+\centering
+\caption{Outcome-selected paired results for LL: large workflows on 111 servers.}
+\label{tab:conditional_case_ll}
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}l*{4}{rcc}@{}}
+\toprule
+Deadline & \multicolumn{3}{c}{D3QN+SAC} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}
+ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ & Energy (J) $\downarrow$ & $\mathrm{ESP}_{90}$ $\uparrow$ & $R_{\mathrm{att}}$ $\uparrow$ \\
+\midrule
+Loose & \shortstack[r]{\textbf{954653.23}\\$\pm 81731.46$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1857013.44\\$\pm 215924.23$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1114907.05\\$\pm 84717.67$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1115725.90\\$\pm 74657.43$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Medium & \shortstack[r]{\textbf{989418.92}\\$\pm 72920.48$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2080944.81\\$\pm 238625.00$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1155260.72\\$\pm 90282.37$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1131757.09\\$\pm 70703.44$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+Tight & \shortstack[r]{\textbf{1006236.73}\\$\pm 72161.22$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{2247471.09\\$\pm 234350.30$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1183675.87\\$\pm 78312.93$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} & \shortstack[r]{1129572.51\\$\pm 66588.66$} & \shortstack[c]{100\%\\(20/20)} & \shortstack[c]{100\%\\(20/20)} \\
+\bottomrule
+\end{tabular}
+\par\vspace{3pt}
+\parbox{\textwidth}{\footnotesize
+\textit{Note.} Energy (J) is the mean with sample SD on the second line, over 20 evaluation seeds.
+$\mathrm{ESP}_{90}$ is the fraction of seeds with at least 45 of 50 workflows completed on time.
+$R_{\mathrm{att}}$ is the fraction of seeds in which every workflow meets the 0.9 reliability requirement.
+Each rate shows its passing-seed count. Bold means denote the lowest energy among constraint-attaining methods.
+The four methods use the same seed list within each condition.
+The seeds were selected based on outcomes; these conditional results do not estimate unconditional success probabilities.}
+\endgroup
+\end{table*}
+
+\paragraph{LL scenario.}
+Table~\ref{tab:conditional_case_ll} reports the LL conditional panel. The mean energies of D3QN+SAC under Loose, Medium, and Tight deadlines are 954653.23, 989418.92, 1006236.73~J, respectively. Relative to the lowest-energy baseline in each regime (DReaM-DQN, OOAC, OOAC in the same order), the corresponding energy reductions are 14.37\%, 12.58\%, 10.92\%. The mean energy of D3QN+SAC increases by 5.40\% from Loose to Tight. All four methods attain 100\% ESP@90 and reliability attainment (20/20 seeds for each metric and condition) on these outcome-selected lists.
+\clearpage
+\end{document}

@@ -1,0 +1,94 @@
+{
+  "generator": {
+    "num_workflows": 20,
+    "dataset_scale": "middle",
+    "arrival_process": "cai_2025_exponential",
+    "arrival_rate": 0.1
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_dvfs_v3.json",
+    "num_edge": 40,
+    "num_cloud": 13
+  },
+  "simulation": {
+    "ready_task_order": "smallest_workload",
+    "deadline_type": "medium",
+    "workflow_reliability_requirement": 0.9,
+    "default_rho": 1.0,
+    "rho_min": 0.2,
+    "energy_eta": 0.5,
+    "default_reliability": 0.95,
+    "reliability_exponent": 3.0,
+    "enable_backup_duplication": false,
+    "remaining_task_reliability_estimate": 0.999,
+    "server_history_ema_alpha": 0.9,
+    "dvfs_action_floor": "energy_efficient"
+  },
+  "agent": {
+    "algorithm": "adapted_oo_actor_critic",
+    "shared": {
+      "device": "cuda",
+      "state": {
+        "version": "d3qn_high_deadline_queue_v2",
+        "max_ready_tasks": 48,
+        "max_servers": 53
+      }
+    },
+    "oo": {
+      "hidden_dim": 256,
+      "hidden_layers": 2,
+      "learning_rate": 0.0001,
+      "gamma": 0.99,
+      "tau": 0.005,
+      "target_update_interval": 3,
+      "rho_levels": [
+        0.2,
+        0.4,
+        0.6,
+        0.8,
+        1.0
+      ],
+      "num_candidates": 100,
+      "top_s": 30,
+      "bit_flip_probability": 0.2,
+      "random_warmup_transitions": 10000,
+      "replay_size": 50000,
+      "batch_size": 128,
+      "training_per_episode": 40,
+      "max_grad_norm": 1.0,
+      "reward_mode": "hierarchical_fixed_lambda_v2",
+      "joint_low_reward_weight": 0.1,
+      "low_deadline_violation_weight": 10.0,
+      "low_reliability_violation_weight": 10.0,
+      "slack_floor_ratio": 0.05,
+      "component_clip": 3.0,
+      "energy_std_floor": 0.05,
+      "slack_time_std_floor": 0.005,
+      "deadline_cost_reward_weight": 0.0
+    }
+  },
+  "objective": {
+    "reward_mode": "deadline_incremental_only",
+    "deadline_violation_weight": 5.0,
+    "fixed_deadline_lambda": 10.0,
+    "fixed_reliability_lambda": 1.0,
+    "high_energy_weight": 1.0
+  },
+  "training": {
+    "seed": 42,
+    "torch_cpu_threads": 1,
+    "training_mode": "joint",
+    "total_episodes": 1500,
+    "update_mode": "episode_end",
+    "eval_interval": 50,
+    "eval_episodes": 5,
+    "eval_seed": 542000,
+    "eval_seed_secondary": 642000,
+    "checkpoint_deadline_esp_threshold": 0.9,
+    "checkpoint_deadline_esp_target": 0.9,
+    "checkpoint_reliability_target": 1.0,
+    "save_every": 50,
+    "save_replay_buffer": false,
+    "checkpoint_dir": "results/oo_actor_critic_medium_40edge_13cloud"
+  }
+}

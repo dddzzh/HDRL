@@ -1,0 +1,384 @@
+\documentclass[lettersize,journal]{IEEEtran}
+
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{array}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+
+\begin{document}
+
+\title{Deadline and Reliability Constrained Hierarchical Reinforcement Learning
+for Energy-Efficient Dynamic Edge--Cloud Workflow Scheduling}
+
+\author{%
+% Author information will be added before submission.
+}
+
+% Add the target journal header after the venue is selected.
+% \markboth{Journal Name, Vol. XX, No. XX, Month Year}%
+% {Author \MakeLowercase{\textit{et al.}}: Short Paper Title}
+
+\maketitle
+
+\begin{abstract}
+% To be completed after the method and experimental results are finalized.
+\end{abstract}
+
+\begin{IEEEkeywords}
+% To be completed.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:introduction}
+
+\IEEEPARstart{E}{merging} applications such as industrial Internet of Things, intelligent
+healthcare, and distributed data analytics increasingly execute close to data
+sources while retaining access to elastic cloud resources. Edge--cloud
+collaboration is therefore attractive because edge servers shorten data paths
+and cloud servers provide greater computing capacity. Many such applications
+comprise multiple dependent stages rather than independent requests. They are
+naturally represented as directed acyclic graph (DAG) workflows, in which
+vertices are computational tasks and edges encode precedence relations and
+inter-task data transfers~\cite{topcuoglu2002,jayanetti2022}. Scheduling these
+workflows is difficult in a heterogeneous edge--cloud system because a task's
+completion time depends jointly on predecessor completion, communication
+delay, the selected server, and the server's current queue.
+
+The difficulty is amplified in an online multi-workflow setting. Workflows
+arrive over time, share the same servers, and compete for queue positions.
+Consequently, placing one ready task changes not only its own execution time
+but also the congestion observed by tasks that arrive or become ready later.
+Classical list scheduling, exemplified by HEFT~\cite{topcuoglu2002}, provides
+an effective static ordering and assignment principle when the workflow and
+resource state are known in advance. Dynamic workflow schedulers and
+evolutionary methods extend this setting to changing arrivals, objectives, or
+resources~\cite{arabnejad2019,ismayilov2020}, but repeated search or
+replanning becomes increasingly costly as the numbers of concurrent workflows
+and heterogeneous servers grow.
+
+Energy management introduces two coupled service-quality risks. Dynamic
+voltage and frequency scaling (DVFS) can reduce processor dynamic power, but a
+lower frequency also prolongs execution, consumes the remaining critical-path
+slack, and propagates delay through shared queues. Moreover, voltage and
+frequency reduction can increase the transient-fault rate, so the most
+energy-efficient decision is not necessarily reliable. Previous
+reliability-aware workflow schedulers have addressed this trade-off through
+server remapping, task replication, checkpointing, or reliability-aware
+frequency selection~\cite{zhang2017,wu2018,hassan2020,wu2023}. These mechanisms
+show that energy, deadline satisfaction, and reliability must be considered
+jointly rather than optimized in isolation.
+
+Deep reinforcement learning (DRL) provides a promising way to adapt scheduling
+decisions to online system states. Existing studies learn task placement for
+dynamic or heterogeneous workflows and optimize makespan, utilization, cost,
+or energy through fixed reward terms or learned objective weights
+~\cite{jayanetti2022,chen2023,pan2024,wen2026}. Nevertheless, three limitations
+remain for the problem considered here. First, a server choice is discrete,
+whereas its DVFS ratio is continuous; flattening both decisions into one action
+space obscures their different physical roles and enlarges the search space.
+Second, deadline and reliability requirements are commonly represented by
+fixed penalties or best-effort objectives, whose effective trade-offs can
+change with workload and system scale. Although constrained reinforcement
+learning offers adaptive Lagrangian mechanisms
+~\cite{achiam2017,tessler2019,stooke2020}, directly assigning workflow-level
+violations to individual
+scheduling decisions remains difficult. Third, a local DVFS decision can delay
+other workflows through a server queue, so a terminal miss signal alone does
+not identify whether the dominant cause was server placement or frequency
+reduction.
+
+To address these challenges, this paper studies computing-energy minimization
+for dynamically arriving DAG workflows under workflow-level deadline and
+reliability requirements. We develop a constraint-aware hierarchical
+reinforcement learning framework. The upper level uses a three-head Dueling
+Double DQN~\cite{vanhasselt2016,wang2016dueling} to select a server. Its heads
+estimate energy reward, deadline cost, and reliability cost separately, and
+online Lagrange multipliers combine the three values only when an action is
+selected. Conditioned on the chosen server, the lower level uses Soft
+Actor--Critic (SAC)~\cite{haarnoja2018} to produce a continuous DVFS ratio.
+This decomposition matches the mixed action structure while allowing the two
+levels to use different state information and constraint feedback.
+
+The framework further introduces three mechanisms for long-horizon constraint
+credit. Queue-congestion credit attributes the waiting time induced by a
+placement decision to the upper policy. A remaining-critical-path safety state
+describes how much execution time can be assigned to the current task without
+exhausting the estimated downstream slack. At the lower level, a workflow-level
+counterfactual replay holds task placements and within-server orders fixed,
+restores the source workflow to maximum frequency, and propagates precedence
+and queue constraints again. The resulting change in deadline cost estimates
+the responsibility of DVFS, including its effects on other workflows sharing
+the same queues. The upper and lower levels maintain separate deadline
+multipliers, while the lower level additionally maintains a reliability
+multiplier for frequency-dependent failures.
+
+The main contributions of this paper are summarized as follows:
+\begin{enumerate}
+    \item We formulate online scheduling in a heterogeneous edge--cloud system
+    as a mixed discrete--continuous optimization problem that minimizes
+    computing energy under workflow-level deadline and reliability
+    requirements, stochastic workflow arrivals, precedence constraints, and
+    shared non-preemptive queues.
+
+    \item We design a hierarchical constrained policy in which a three-head
+    Dueling Double DQN performs discrete server placement and a continuous-action
+    SAC controller determines the DVFS ratio. Independent deadline multipliers
+    at the two levels and a lower-level reliability multiplier adapt constraint
+    pressure without relying on fixed multi-objective weights.
+
+    \item We develop queue-congestion credit, a remaining-critical-path safety
+    representation, and workflow-level DVFS counterfactual attribution to
+    connect delayed workflow violations to the placement and frequency
+    decisions that caused them.
+
+    \item We adopt constraint-first checkpoint selection based on the empirical
+    success probability at a 90\% deadline-success threshold (ESP@90) and the
+    reliability success rate. Energy is compared only among checkpoints that
+    pass the prescribed validation gates.
+\end{enumerate}
+
+The proposed approach targets empirical constraint satisfaction over the
+workflow distribution. It does not claim a deterministic hard-real-time or
+per-workflow reliability guarantee for every unseen arrival sequence.
+
+\section{Related Work}
+\label{sec:related_work}
+
+\subsection{Dynamic Workflow Scheduling in Heterogeneous Edge--Cloud Systems}
+
+\subsection{Constrained and Hierarchical Reinforcement Learning}
+
+\subsection{DVFS and Reliability-Aware Scheduling}
+
+\section{Problem Formulation}
+\label{sec:problem_formulation}
+
+We consider an online edge--cloud platform that receives a stream of DAG
+workflows. To keep the formulation concise, this section describes an
+arbitrary arriving workflow $G_k$; the same model applies to every workflow in
+the stream. Contention with earlier and concurrent workflows is captured by
+the availability time of each server. The main notation is summarized in
+Table~\ref{tab:key_notations}.
+
+\begin{table}[t]
+    \centering
+    \caption{Key Notations}
+    \label{tab:key_notations}
+    \renewcommand{\arraystretch}{1.08}
+    \begin{tabular}{@{}p{0.25\columnwidth}p{0.68\columnwidth}@{}}
+        \toprule
+        Notation & Description \\
+        \midrule
+        $G_k$ & workflow $k$, described by $(\mathcal{N}_k,\mathcal{E}_k,D_k,\Theta_k)$ \\
+        $\mathcal{M}$ & set of edge and cloud servers \\
+        $w_i,d_{ij}$ & workload of task $i$ in Giga-cycles and data on edge $(i,j)$ \\
+        $f_m^{\max}$ & maximum processing frequency of server $m$ in GHz \\
+        $m_i,\rho_i$ & selected server and DVFS ratio of task $i$ \\
+        $RT_i,AST_i,AFT_i$ & ready, actual-start, and actual-finish times \\
+        $C_k,E_k,R_k$ & response time, computing energy, and reliability of workflow $k$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{System and Scheduling Model}
+\label{sec:system_model}
+
+\subsubsection{Workflow and Edge--Cloud Resource Model}
+
+Each workflow $G_k$ is represented by a DAG
+\begin{equation}
+    G_k=(\mathcal{N}_k,\mathcal{E}_k,D_k,\Theta_k),
+    \label{eq:workflow_model}
+\end{equation}
+where $\mathcal{N}_k$ is the task set, $\mathcal{E}_k$ is the set of
+precedence edges, $D_k$ is the deadline, and $\Theta_k$ is the required
+workflow reliability. Task $i\in\mathcal{N}_k$ has workload $w_i$ measured
+in Giga-cycles, and
+$d_{ij}$ denotes the data transferred along edge
+$(i,j)\in\mathcal{E}_k$. Workflow $k$ arrives at time $a_k$.
+
+The platform contains edge servers $\mathcal{M}^{\mathrm{e}}$ and cloud
+servers $\mathcal{M}^{\mathrm{c}}$. Their union is
+\begin{equation}
+    \mathcal{M}=\mathcal{M}^{\mathrm{e}}\cup\mathcal{M}^{\mathrm{c}}.
+    \label{eq:server_set}
+\end{equation}
+Each server executes one task at a time without preemption. A task becomes
+ready after all its predecessors finish. Among ready tasks, a fixed
+smallest-workload-first rule determines the next task, while the scheduling
+policy selects its server and operating frequency.
+
+\subsubsection{Communication Delay and Execution Time}
+Let $m_i\in\mathcal{M}$ be the server selected for task $i$, and let $B_{mn}$
+denote the effective bandwidth from server $m$ to server $n$. For edge
+$(i,j)\in\mathcal{E}_k$, the communication delay is
+\begin{equation}
+    c_{ij}(m_i,m_j)=
+    \begin{cases}
+        0, & m_i=m_j,\\[2pt]
+        \dfrac{d_{ij}}{B_{m_i m_j}}, & m_i\neq m_j.
+    \end{cases}
+    \label{eq:communication_time}
+\end{equation}
+Server $m$ has maximum processing frequency $f_m^{\max}$ in GHz. For task
+$i$, the DVFS ratio $\rho_i\in[\rho_{m_i}^{\min},1]$ determines its actual
+frequency as $f_i=\rho_i f_{m_i}^{\max}$, where $\rho_m^{\min}$ is the
+minimum DVFS ratio supported by server $m$. The execution time of task $i$ is
+\begin{equation}
+    t_i=\frac{w_i}{f_i}
+       =\frac{w_i}{\rho_i f_{m_i}^{\max}}.
+    \label{eq:execution_time}
+\end{equation}
+Initial data upload and final-result delivery are not included in the
+scheduling boundary.
+
+\subsubsection{Online Queue-Based Time Model}
+Let $\operatorname{pred}(i)$ denote the predecessor set of task $i$. Its ready
+time on candidate server $m$ is
+\begin{equation}
+    RT_i(m)=
+    \begin{cases}
+        a_k, & \operatorname{pred}(i)=\varnothing,\\[3pt]
+        \displaystyle\max_{j\in\operatorname{pred}(i)}
+        \{AFT_j+c_{ji}(m_j,m)\}, & \text{otherwise}.
+    \end{cases}
+    \label{eq:ready_time}
+\end{equation}
+Let $T_m$ be the time at which server $m$ becomes available, including work
+already queued by other workflows. The start and finish times of task $i$ are
+\begin{equation}
+    AST_i=\max\{RT_i(m_i),T_{m_i}\},
+    \qquad
+    AFT_i=AST_i+t_i.
+    \label{eq:task_times}
+\end{equation}
+After assignment, $T_{m_i}$ is updated to $AFT_i$. This recurrence represents
+both precedence constraints and non-overlapping execution on each server.
+
+\subsection{Energy Model and DVFS}
+\label{sec:energy_model}
+
+Let $P_m^0$ and $P_m^d$ denote the base active power and
+maximum-frequency dynamic power of server $m$, respectively. At DVFS ratio
+$\rho$, its active power is
+\begin{equation}
+    P_m(\rho)=P_m^{0}+P_m^{d}\rho^3.
+    \label{eq:power_model}
+\end{equation}
+The computing energy consumed by task $i$ is
+\begin{equation}
+    E_i=P_{m_i}(\rho_i)t_i.
+    \label{eq:task_energy}
+\end{equation}
+The total computing energy of workflow $G_k$ is
+\begin{equation}
+    E_k=\sum_{i\in\mathcal{N}_k}E_i.
+    \label{eq:total_energy}
+\end{equation}
+Communication energy and schedule-independent idle energy are excluded.
+
+\subsection{Reliability Model}
+\label{sec:reliability_model}
+
+Let $\lambda_m^0$ be the transient-failure rate of server $m$ at maximum
+frequency, and let $\beta_m$ describe its sensitivity to frequency reduction.
+Its failure rate at DVFS ratio $\rho$ is
+\begin{equation}
+    \lambda_m(\rho)=\lambda_m^0
+    10^{\beta_m(1-\rho)/(1-\rho_m^{\min})}.
+    \label{eq:frequency_failure_rate}
+\end{equation}
+Assuming independent exponential failures, the reliability of task $i$ and
+workflow $G_k$ is
+\begin{equation}
+    R_i=\exp[-\lambda_{m_i}(\rho_i)t_i],
+    \qquad
+    R_k=\prod_{i\in\mathcal{N}_k}R_i.
+    \label{eq:workflow_reliability}
+\end{equation}
+The reliability requirement is satisfied when $R_k\geq\Theta_k$.
+
+\subsection{Deadline Model}
+\label{sec:deadline_model}
+
+The response time of workflow $G_k$ is measured from its arrival to the
+completion of its exit task:
+\begin{equation}
+    C_k=\max_{i\in\mathcal{N}_k}AFT_i-a_k.
+    \label{eq:workflow_response_time}
+\end{equation}
+The deadline requirement is satisfied when $C_k\leq D_k$. The procedure used
+to generate $D_k$ for the experiments is described in
+Section~\ref{sec:evaluation}.
+
+\subsection{Optimization Problem}
+\label{sec:optimization_problem}
+
+For each arriving workflow, the scheduler selects the server--DVFS pair
+$(m_i,\rho_i)$ of every task. The problem is formulated as
+\begin{subequations}
+\label{eq:optimization}
+\begin{align}
+    \min_{\{m_i,\rho_i\}}
+    \quad & E_k
+    \label{eq:optimization_objective}\\
+    \text{s.t.}\quad
+    & C_k\leq D_k,
+    \label{eq:constraint_deadline}\\
+    & R_k\geq\Theta_k,
+    \label{eq:constraint_reliability}\\
+    & m_i\in\mathcal{M},\quad
+      \rho_i\in[\rho_{m_i}^{\min},1],
+    && \forall i\in\mathcal{N}_k.
+    \label{eq:constraint_actions}
+\end{align}
+\end{subequations}
+The timing relations in~\eqref{eq:ready_time}--\eqref{eq:task_times} enforce
+task precedence and server exclusivity. Since $m_i$ is discrete and $\rho_i$ is
+continuous, Problem~\eqref{eq:optimization} has a mixed action space. The next
+section develops a hierarchical reinforcement learning method for making these
+decisions online.
+
+\section{Proposed Hierarchical Constrained Reinforcement Learning Method}
+\label{sec:method}
+
+\subsection{Hierarchical Decision Process}
+
+\subsection{Upper-Level Three-Head Dueling Double DQN}
+
+\subsection{Lower-Level Constrained Soft Actor--Critic}
+
+\subsection{Constraint Credit Assignment and Lagrangian Updates}
+
+\subsection{Constraint-First Checkpoint Selection}
+
+\section{Performance Evaluation}
+\label{sec:evaluation}
+
+\subsection{Experimental Setup}
+
+\subsection{Baselines and Implementation Details}
+
+\subsection{Overall Performance}
+
+\subsection{Deadline and Reliability Analysis}
+
+\subsection{Ablation Study}
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

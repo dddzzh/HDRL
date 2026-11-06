@@ -339,7 +339,15 @@ class EdgeCloudWorkflowEnv:
         )
         return float(primary_plan["energy"])
 
-    def compute_low_safety_metrics(self, workflow_id, task_id, server_id):
+    def _mean_task_execution_time_rho1(self, task):
+        return sum(
+            compute_execution_time(task["workload_cycles"], candidate, rho=1.0)
+            for candidate in self.servers
+        ) / max(len(self.servers), 1)
+
+    def compute_low_safety_metrics(
+        self, workflow_id, task_id, server_id, *, mean_current_execution=None
+    ):
         workflow_id = str(workflow_id)
         task_id = int(task_id)
         server_id = int(server_id)
@@ -386,10 +394,8 @@ class EdgeCloudWorkflowEnv:
                     "future_critical_path_safety requires HEFT upward ranks for "
                     f"workflow={workflow_id}, task={task_id}."
                 )
-            mean_current_execution = sum(
-                compute_execution_time(task["workload_cycles"], candidate, rho=1.0)
-                for candidate in self.servers
-            ) / max(len(self.servers), 1)
+            if mean_current_execution is None:
+                mean_current_execution = self._mean_task_execution_time_rho1(task)
             # HEFT rank_u is current mean execution plus the longest average
             # communication/execution tail.  Subtracting the current task leaves
             # exactly the remaining critical-path estimate that must retain slack.
@@ -473,10 +479,19 @@ class EdgeCloudWorkflowEnv:
         server_safety_metrics = {}
         server_energy_refs = []
         global_urgency = self.global_critical_pressure_metrics()
+        # This mean depends on the task/pool, not the candidate server. Reuse
+        # it only within this decision; queue-dependent metrics stay fresh.
+        mean_current_execution = None
+        if bool(self.sim_config.get("future_critical_path_safety", False)):
+            task = self._get_task(self.workflow_by_id[workflow_id]["workflow"], task_id)
+            mean_current_execution = self._mean_task_execution_time_rho1(task)
 
         for index, server in enumerate(self.servers):
             server_id = int(server["id"])
-            metrics = self.compute_low_safety_metrics(workflow_id, task_id, server_id)
+            metrics = self.compute_low_safety_metrics(
+                workflow_id, task_id, server_id,
+                mean_current_execution=mean_current_execution,
+            )
             low_action_feasible = bool(metrics["low_action_feasible"])
             # Structural mask only: every real server is selectable. Deadline
             # feasibility remains diagnostic/reward information for SAC/D3QN.

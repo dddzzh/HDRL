@@ -5,50 +5,21 @@ from pathlib import Path
 from typing import Any, Optional
 from xml.etree import ElementTree as ET
 
-from src.datasets.arrival_process import (
-    CAI_2025_ARRIVAL_PROCESS,
-    DEFAULT_POISSON_ARRIVAL_RATE,
-    resolve_arrival_rate,
-    sample_configured_arrivals,
-)
-from src.simulator.deadline import cai_2025_deadline_fields, validate_deadline_type
+from src.datasets.arrival_process import resolve_arrival_rate
+from src.simulator.deadline import validate_deadline_type
 from src.simulator.workflow import DependencyEdge, Task, Workflow
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "sec_job_reference"
 
-# Keep the same XML grouping and cumulative sampling rule as
-# D3QN_for_Fog_Computing(1.6)/CreateDataset.py.
+# Canonical source templates: small, medium, then large groups.
 PEGASUS_XML_FILES = (
-    "CyberShake_30.xml",
-    "Epigenomics_24.xml",
-    "Inspiral_30.xml",
-    "Montage_25.xml",
-    "Sipht_30.xml",
-    "CyberShake_50.xml",
-    "Epigenomics_46.xml",
-    "Inspiral_50.xml",
-    "Montage_50.xml",
-    "Sipht_60.xml",
-    "CyberShake_100.xml",
-    "Epigenomics_100.xml",
-    "Inspiral_100.xml",
-    "Montage_100.xml",
-    "Sipht_100.xml",
-    "CyberShake_1000.xml",
-    "Epigenomics_997.xml",
-    "Inspiral_1000.xml",
-    "Montage_1000.xml",
-    "Sipht_1000.xml",
+    "CyberShake_30.xml", "Epigenomics_24.xml", "Ligo_30.xml", "Montage_25.xml", "Sipht_29.xml",
+    "CyberShake_50.xml", "Epigenomics_47.xml", "Ligo_50.xml", "Montage_50.xml", "Sipht_58.xml",
+    "CyberShake_100.xml", "Epigenomics_100.xml", "Ligo_100.xml", "Montage_100.xml", "Sipht_97.xml",
 )
-
-DATASET_SCALE_LIMITS = {
-    "small": 5,
-    "middle": 10,
-    "large": 15,
-    "huge": 20,
-}
+DATASET_SCALE_LIMITS = {"small": 5, "middle": 10, "large": 15}
 
 # These are the physical ranges already used by this project.  They are kept
 # as model constants instead of repeated generator configuration fields.
@@ -59,25 +30,24 @@ DATA_SIZE_MB_MAX = 30.0
 
 
 class PegasusWorkflowGenerator:
-    """Sample real Pegasus XML DAG templates using the reference D3QN rule."""
+    """Physical XML parser and compatibility entry for the current sec-job protocol."""
 
     def __init__(self, config: Optional[dict[str, Any]] = None, seed: int = 42):
         config = config or {}
         self.config = dict(config)
         self.seed = int(seed)
-        self.num_workflows = int(config.get("num_workflows", 20))
+        self.num_workflows = int(config.get("num_workflows", 50))
         self.dataset_scale = str(
             config.get("dataset_scale", config.get("datasetScale", "small"))
         ).lower()
-        self.data_dir = self._resolve_data_dir(config.get("path", "data"))
-        self.arrival_rate = resolve_arrival_rate(config, default=DEFAULT_POISSON_ARRIVAL_RATE)
+        self.data_dir = self._resolve_data_dir(config.get("path", DEFAULT_DATA_DIR))
+        self.arrival_rate = resolve_arrival_rate(config, default=0.03)
         self.arrival_process = str(
-            config.get("arrival_process", CAI_2025_ARRIVAL_PROCESS)
+            config.get("arrival_process", "sec_job_exponential")
         )
         self.start_time = float(config.get("start_time", 0.0))
         self.reliability_target = self._resolve_reliability_requirement(config)
         self.deadline_type = validate_deadline_type(config.get("deadline_type", "medium"))
-        self.deadline_heft_rho = float(config.get("deadline_heft_rho", config.get("heft_rho", 1.0)))
         self.energy_eta = float(config.get("energy_eta", 0.5))
 
     def generate(
@@ -85,57 +55,11 @@ class PegasusWorkflowGenerator:
         servers: Optional[list[dict[str, Any]]] = None,
         link_bandwidth_mbps: Optional[dict[str, float]] = None,
     ) -> list[Workflow]:
-        if self.num_workflows <= 0:
-            raise ValueError("num_workflows must be positive")
-        if self.dataset_scale not in DATASET_SCALE_LIMITS:
-            raise ValueError(
-                f"invalid dataset_scale={self.dataset_scale!r}; expected one of "
-                f"{sorted(DATASET_SCALE_LIMITS)}"
-            )
-
-        rng = random.Random(self.seed)
-        arrival_times, inter_arrival_times, source_device_ids, arrival_process = (
-            sample_configured_arrivals(
-                self.num_workflows,
-                self.config,
-                self.start_time,
-                rng,
-            )
+        # Keep existing callers, but never silently run the retired generator.
+        from src.datasets.sec_job_workflow_generator import SecJobWorkflowGenerator
+        return SecJobWorkflowGenerator(self.config, self.seed).generate(
+            servers=servers, link_bandwidth_mbps=link_bandwidth_mbps,
         )
-        template_names = PEGASUS_XML_FILES[: DATASET_SCALE_LIMITS[self.dataset_scale]]
-        reference_makespan_cache: dict[str, dict[str, Any]] = {}
-        workflows = []
-        for index in range(self.num_workflows):
-            template_name = rng.choice(template_names)
-            workflow = self._workflow_from_xml(
-                self.data_dir / template_name,
-                index=index,
-                arrival_time=arrival_times[index],
-                rng=rng,
-            )
-            workflow.arrival_index = index
-            workflow.inter_arrival_time = inter_arrival_times[index]
-            workflow.arrival_process = arrival_process
-            workflow.arrival_rate = self.arrival_rate
-            workflow.source_device_id = source_device_ids[index]
-            workflow.dataset_scale = self.dataset_scale
-            workflow.template_name = template_name
-
-            if servers is not None:
-                deadline_info = cai_2025_deadline_fields(
-                    workflow,
-                    workflow.arrival_time,
-                    servers,
-                    deadline_type=self.deadline_type,
-                    rng=rng,
-                    link_bandwidth_mbps=link_bandwidth_mbps,
-                    rho=self.deadline_heft_rho,
-                    cache=reference_makespan_cache,
-                )
-                self._set_deadline_fields(workflow, deadline_info)
-                self._log_deadline(workflow, deadline_info)
-            workflows.append(workflow)
-        return workflows
 
     def _workflow_from_xml(
         self,

@@ -1,0 +1,469 @@
+% Standalone preview. Copy only the Proposed Method section into the manuscript.
+% Citation keys match docs/references.bib; the preview bibliography is embedded.
+% Notation aligned with the author's manuscript supplied on 2026-10-06.
+\documentclass[10pt,twocolumn]{article}
+\usepackage[a4paper,margin=19mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage[hidelinks]{hyperref}
+\begin{document}
+\setcounter{section}{3}
+
+\section{Proposed Method}
+\label{sec:method}
+
+\subsection{Decision Process and Hierarchical Framework}
+\label{subsec:framework}
+
+Server placement and frequency control are coordinated through a
+hierarchical partially observable decision process. The two learners
+observe task and resource features rather than the complete scheduling
+state. We describe the process by
+\begin{equation}
+ \mathfrak P=\langle\mathcal K,\mathcal S,\mathcal A,\mathcal P,
+ \Omega,\mathcal O,\mathbf r,\boldsymbol\delta\rangle,
+ \label{eq:method_pomdp}
+\end{equation}
+where:
+\begin{itemize}
+ \item $\mathcal K=\{H,L\}$ is the set of upper and lower learners.
+ \item $\mathcal S$ is the global state space, including workflow progress,
+ server queues, current time, and the arrival-process state.
+ \item $\mathcal A$ is the joint action space. For a ready task $i$,
+ $a_t=(m_i,\rho_i)$ specifies its server and frequency ratio, with
+ $\mathcal A=\bigcup_{m\in\mathcal M}
+ (\{m\}\times[\underline\rho_m,1])$.
+ \item $\mathcal P(s'\mid s,a)$ is the state-transition kernel induced by
+ task execution, queue evolution, and workflow arrivals.
+ \item $\Omega=\Omega_H\times\Omega_L$ is the joint observation space,
+ where $\Omega_H$ and $\Omega_L$ contain the feature representations
+ $s_t^H$ and $s_t^L$, respectively.
+ \item $\mathcal O$ is the observation kernel. Upper observations are
+ obtained from the current state; lower observations additionally depend
+ on the server selected by the upper learner. The encoders used here
+ are deterministic.
+ \item $\mathbf r=(r_{E,t}^H,r_t^L)$ contains the upper energy reward and
+ lower frequency-control reward. Deadline and reliability costs are
+ specified separately in the following subsections.
+ \item $\boldsymbol\delta=(\delta_E,\delta_D,\delta_R,\delta_L)$ contains
+ the discount factors for upper energy and constraint estimation and
+ lower actor--critic learning, each taking a value in $(0,1]$.
+\end{itemize}
+
+The index $t$ denotes a task-dispatch decision, not a fixed physical-time
+interval. A common ready-task ordering rule supplies task $i$ of workflow
+$w$; task ordering is not learned. The upper learner first selects $m_i$
+from $s_t^H$, after which the lower learner determines $\rho_i$ from the
+selected-server observation $s_t^L$. Each trajectory covers the complete
+execution of a workload.
+
+Placement determines communication and contention, whereas frequency
+control determines execution time and active energy on the selected
+server. We therefore factorize the policy into a discrete upper policy
+and a conditional continuous lower policy:
+\begin{equation}
+ \pi(m_i,\rho_i\mid s_t)
+ =\pi_H(m_i\mid s_t^H)\,
+   \pi_L(\rho_i\mid s_t^L,m_i),
+ \label{eq:method_factorization}
+\end{equation}
+where $s_t^H$ and $s_t^L$ are the respective feature-based observations.
+They summarize, rather than fully reconstruct, the Markov state.
+The upper learner uses three D3QN estimators for energy, deadline, and
+reliability, while the lower learner uses soft actor--critic (SAC) for
+DVFS. Both learn from the same trajectories: the upper action is evaluated
+after the lower frequency decision, and both observe global deadline
+pressure. Their constraint costs distinguish placement consequences from
+the additional losses caused by frequency reduction.
+
+For the current workflow $w$, retain the local task notation
+$\mathcal N$ and $n=|\mathcal N|$ from the system model. Let
+$\mathcal I_w$ contain its decision indices and $[x]_+=\max(0,x)$.
+The service threshold $\Gamma$ and target probability $\eta$ retain
+their meanings in the problem formulation.
+In sums over decisions from different workflows, $n$ and $D_w$ refer
+to the workflow of the corresponding decision.
+We use $\mu$, rather than $\lambda$, for constraint multipliers to
+distinguish them from the transient-fault rates in the system model.
+The actual energy remains $E_i$; $\widehat E(i,m,\rho)$ denotes the same
+energy model evaluated for a candidate server and frequency. The
+energy-efficient ratio $\rho_m^{\mathrm{ee}}$ is defined in the power and
+energy model.
+
+\subsection{Upper-Level Server Selection}
+\label{subsec:high}
+
+\subsubsection{State Representation}
+
+The upper state contains task workload and deadline slack, together with
+server-specific estimates of communication time, execution time, queue
+waiting, full-frequency energy, and task failure probability. Server
+occupancy and recent assignment history describe resource contention.
+Current slack alone does not account for unfinished successors. Let
+$\ell_i$ be an estimate of the completion time still required after task
+$i$, obtained from its upward rank after removing its mean execution
+time; any required final output transfer is included. For candidate
+server $m$, let $\widehat{ST}(i,m)$ and $\widehat{FT}(i,m)$ be its
+estimated start and full-frequency finish times under the current queues.
+Its predicted workflow response time is
+\begin{equation}
+ \widehat T(i,m)=\widehat{FT}(i,m)-a_w+\ell_i.
+ \label{eq:method_predicted_finish}
+\end{equation}
+With a small margin $\zeta$, the available execution budget is
+$b(i,m)=(1-\zeta)[a_w+D_w-\widehat{ST}(i,m)-\ell_i]$.
+Let $\widehat{ET}(i,m)=L_i/F_m$ denote full-frequency execution time on candidate
+server $m$. The state includes this budget and the indicative frequency
+\begin{equation}
+ \widehat\rho(i,m)=
+ \begin{cases}
+ \min\{1,\max\{\rho_m^{\mathrm{ee}},\widehat{ET}(i,m)/b(i,m)\}\},&b(i,m)>0,\\
+ 1,&b(i,m)\leq0,
+ \end{cases}
+ \label{eq:method_time_frequency}
+\end{equation}
+This frequency is a state feature, not a hard deadline-feasibility
+guarantee.
+
+To expose congestion beyond the current workflow, let $\mathcal W_t$
+contain all released, unfinished workflows and let $h_w$ estimate their
+remaining critical-path duration, accounting for the residual execution
+of running tasks. At current physical time $t_{\mathrm{now}}$, and with
+$\epsilon>0$ to prevent division by zero, define
+\begin{align}
+ p_w&=\frac{h_w}{\max\{a_w+D_w-t_{\mathrm{now}},\epsilon\}},\nonumber\\
+ \chi_t&=\tanh\!\left(\frac{\sum_{w\in\mathcal W_t}p_w}{|\mathcal M|}\right),\quad
+ \chi_t^{\max}=\frac{\min\{2,\max_{w\in\mathcal W_t}p_w\}}{2},
+ \label{eq:method_global_pressure}
+\end{align}
+Both features are zero when $\mathcal W_t$ is empty. They enter both levels,
+allowing placement and frequency control to observe shared deadline
+pressure rather than only local slack. Time features are normalized by
+the corresponding workflow deadline.
+
+\subsubsection{Action Selection}
+
+The upper learner maintains independent energy-return, deadline-cost,
+and reliability-cost estimators, denoted by $Q_E$, $Q_D$, and $Q_R$.
+Each uses the dueling representation~\cite{wang2016dueling}
+\begin{equation}
+ Q_h(s,m)=V_h(s)+A_h(s,m)
+ -\frac{1}{|\mathcal M|}\sum_{m'\in\mathcal M}A_h(s,m'),
+ \quad h\in\{E,D,R\}.
+ \label{eq:method_dueling}
+\end{equation}
+The estimators have separate parameters; their outputs are combined
+only for action selection. Given multipliers $\mu_D^H$ and $\mu_R^H$,
+the exploitation action is
+\begin{equation}
+ m_i=\arg\max_{m\in\mathcal M}
+ \left\{Q_E(s_t^H,m)-\mu_D^H[Q_D(s_t^H,m)]_+
+ -\mu_R^H Q_R(s_t^H,m)\right\}.
+ \label{eq:method_high_action}
+\end{equation}
+The nonnegative deadline projection prevents a negative cost estimate
+from being treated as a scheduling benefit. Training uses
+$\varepsilon$-greedy exploration over the available servers.
+
+\subsubsection{Reward and Constraint Costs}
+
+\paragraph{Energy.}
+Let $\bar E_i=\operatorname{median}_{m\in\mathcal M}
+\widehat E(i,m,1)$ be its full-frequency reference scale. The energy feedback is
+\begin{equation}
+ r_{E,t}^H=\frac{\bar E_i-E_i}{n\bar E_i}.
+ \label{eq:method_high_energy}
+\end{equation}
+This dimensionless surrogate exposes the realized energy difference
+while limiting the dependence of reward magnitude on workflow size.
+
+\paragraph{Deadline.}
+Let $\Delta T_{w,t}$ be the nonnegative increment in the predicted
+partial workflow response time after decision $t$. Terminal feedback
+reconciles these increments with the completed response time, such that
+$\sum_{t\in\mathcal I_w}\Delta T_{w,t}=T_w$.
+Let $q_t$ be the selected task's waiting time caused by server contention,
+excluding prerequisite communication and waiting before dispatch.
+It is the server-contention component of $WT(i)$, not the
+communication delay $c_{ji}$ or the execution duration $ET_i$.
+The dense cost is
+\begin{equation}
+ d_t=\frac{\Delta T_{w,t}}{D_w}
+ +\beta_q\frac{q_t}{nD_w}.
+ \label{eq:method_dense_cost}
+\end{equation}
+The queue term provides credit to tasks whose waiting does not increase
+the current workflow completion frontier. It also participates in
+distributing the final miss cost. Define
+$b_w=\mathbb{I}(T_w>D_w)$ and
+$\omega_t=d_t/\sum_{j\in\mathcal I_w}d_j$.
+For a completed trajectory $e$ with workflow set $\mathcal W_e$, let
+$\mathrm{SR}_e$ be its deadline success rate as defined in the problem
+formulation. The service-level failure indicator is
+$z_e=\mathbb{I}(\mathrm{SR}_e<\Gamma)$.
+To allocate this trajectory-level failure, define the avoidable
+predicted completion regret
+$\Delta_t^{\mathrm{sel}}=[\widehat T(i,m_i)-\min_m\widehat T(i,m)]_+/D_w$
+and normalize it
+over all decision indices $\mathcal I_e$ of the run as
+$\nu_t=\Delta_t^{\mathrm{sel}}/\sum_{j\in\mathcal I_e}\Delta_j^{\mathrm{sel}}$.
+With failure-credit coefficient $\beta_{\mathrm{miss}}$, the final deadline cost is
+\begin{equation}
+ g_{D,t}^H=d_t+\beta_{\mathrm{miss}} b_w\omega_t
+ +\beta_{\mathrm{miss}} z_e\nu_t,
+ \label{eq:method_high_deadline}
+\end{equation}
+The same coefficient controls both failure-credit terms. Zero denominators
+are handled by uniform allocation over the corresponding indices.
+Thus, ESP failure credit supplements, rather than replaces, the dense
+signal. For queue calibration, let $\mathcal I_{\mathrm{cal}}$ contain
+the decision indices in an initial observation window and let
+$\theta_q\in(0,1)$ be the desired queue share of the dense cost. Set
+\begin{equation}
+ \beta_q=\frac{\theta_q}{1-\theta_q}
+ \frac{\sum_{t\in\mathcal I_{\mathrm{cal}}}\Delta T_{w,t}/D_w}
+ {\sum_{t\in\mathcal I_{\mathrm{cal}}}q_t/(nD_w)}.
+ \label{eq:method_queue_calibration}
+\end{equation}
+The coefficient is then held fixed;
+it is zero when no queue waiting is observed.
+
+\paragraph{Reliability.}
+The completed workflow reliability deficit is
+$\ell_w^R=[\log R_w-\log\mathcal R_w]_+$.
+The reliability cost $g_{R,t}^H$ equals $\ell_w^R$ at the last decision
+of workflow $w$ and zero at its other decisions. Delayed feedback is
+attached to the corresponding transition after completion.
+
+\subsubsection{Value Update}
+
+The three estimators use Double-Q targets~\cite{vanhasselt2016} with a
+common next server selected by the online score in
+\eqref{eq:method_high_action}. Let this server be $m^*$, let bars denote
+target estimators, let $\delta_h$ be discount factors, and let $\iota_t$
+indicate the end of the complete scheduling trajectory. Then
+\begin{align}
+ y_{E,t}&=r_{E,t}^H+\delta_E(1-\iota_t)\bar Q_E(s_{t+1}^H,m^*),\nonumber\\
+ y_{D,t}&=g_{D,t}^H+\delta_D(1-\iota_t)[\bar Q_D(s_{t+1}^H,m^*)]_+,\nonumber\\
+ y_{R,t}&=g_{R,t}^H+\delta_R(1-\iota_t)\bar Q_R(s_{t+1}^H,m^*).
+ \label{eq:method_high_targets}
+\end{align}
+For replay minibatch $\mathcal B$, each estimator minimizes
+\begin{equation}
+ \mathcal L_h=\mathbb E_{\mathcal B}\left[
+ \operatorname{Huber}\!\left(Q_h(s_t^H,m_i)-y_{h,t}\right)\right],
+ \quad h\in\{E,D,R\}.
+ \label{eq:method_high_loss}
+\end{equation}
+Transitions retain the
+global chronological order, including switches between workflows,
+because their queues and future costs are coupled.
+
+\subsection{Lower-Level Frequency Control}
+\label{subsec:low}
+
+\subsubsection{State and Action}
+
+The lower observation $s_t^L$ contains the selected task's workload,
+full-frequency execution time, predicted waiting time, remaining
+deadline, server power characteristics, and reliability requirement.
+It also includes $\chi_t$ and $\chi_t^{\max}$, so that frequency control
+can respond to urgency outside the current workflow.
+The learner uses SAC~\cite{haarnoja2018}, with a stochastic actor
+and two soft critics. The actor produces a squashed-Gaussian
+frequency proposal $\rho_i^a\in[\rho_0,1]$, where $\rho_0$ is the
+common minimum proposal ratio. The executed ratio is
+\begin{equation}
+ \rho_i=\max\{\rho_i^a,\rho_{m_i}^{\mathrm{ee}}\}.
+ \label{eq:method_frequency_floor}
+\end{equation}
+The floor excludes frequencies below the energy-efficient operating point; it
+does not enforce the time-based frequency in
+\eqref{eq:method_time_frequency}.
+
+\subsubsection{Reward and Responsibility Credit}
+
+\paragraph{Energy and local delay.}
+For the selected server and the same pre-decision queue, compare the
+executed action with full-frequency execution. Define
+$\Delta E_i=\widehat E(i,m_i,1)-E_i$ and
+$\Delta ET_i=[ET_i-L_i/F_{m_i}]_+$.
+If $T_{w,t}^{\mathrm{pre}}$ is the partial workflow response time before
+the decision, the local delay shaping cost is
+\begin{equation}
+ h_t=\frac{\Delta ET_i}{\max\{D_w-T_{w,t}^{\mathrm{pre}},\zeta D_w\}}.
+ \label{eq:method_local_delay}
+\end{equation}
+The energy and delay components are standardized separately using
+replay statistics. Write
+$\mathcal Z_x(x)=\operatorname{clip}((x-\bar x)/\max\{\sigma_x,\sigma_x^{\min}\},
+-b_Z,b_Z)$, where $\bar x$ and $\sigma_x$ are the replay mean and standard
+deviation, $\sigma_x^{\min}>0$ is a scale floor, and $b_Z$ bounds the normalized
+component.
+
+\paragraph{Deadline responsibility.}
+A local timing comparison cannot account for delays passed to later
+tasks on the same server. We therefore evaluate completed trajectories
+under fixed placement, server execution order, communication delays,
+and decision-release times. Restoring execution to full frequency
+propagates through both workflow-precedence and server-order edges.
+This replay changes execution durations, not the scheduling decisions.
+
+Let $T_v^{(1)}$ be workflow $v$'s response time when all tasks are
+restored to full frequency, and $T_v^{(u)}$ its response time when only
+workflow $u$ is restored. With normalized lateness
+$\mathcal L(T,D)=[(T-D)/D]_+$, define
+\begin{align}
+ d_v^L&=\min\{1,[\mathcal L(T_v,D_v)-\mathcal L(T_v^{(1)},D_v)]_+\},\nonumber\\
+ M_{uv}&=[\mathcal L(T_v,D_v)-\mathcal L(T_v^{(u)},D_v)]_+.
+ \label{eq:method_counterfactual_marginal}
+\end{align}
+The first quantity measures the victim's DVFS-attributable lateness;
+the second measures the contribution associated with source workflow
+$u$. Allocate each victim's cost back to its sources as
+\begin{equation}
+ G_u=\sum_{v\in\mathcal W_e}
+ \frac{M_{uv}}{\sum_{r\in\mathcal W_e}M_{rv}}\,d_v^L.
+ \label{eq:method_source_credit}
+\end{equation}
+If every marginal for a victim is zero, its cost is allocated in
+proportion to the sources' total execution slowdown. With positive
+attributable slowdown, $\sum_uG_u=\sum_vd_v^L$, avoiding repeated
+charging of the same victim cost. Source credit is distributed among
+its frequency actions by
+\begin{equation}
+ g_{D,t}^L=G_w\frac{\Delta ET_i}
+ {\sum_{j\in\mathcal N}\Delta ET_j},\qquad t\in\mathcal I_w,
+ \label{eq:method_low_deadline_credit}
+\end{equation}
+using uniform allocation if the denominator is zero. This conditional
+responsibility measure includes queue delays imposed on other
+workflows; it is not a reoptimized counterfactual schedule.
+
+\paragraph{Reliability responsibility.}
+Let $\widehat{\mathcal R}_{w,t}(f)$ be projected workflow reliability
+when the current task executes at frequency $f$, with previous decisions and the
+remaining-task estimate held fixed. Define
+\begin{align}
+ u_{R,t}(f)&=
+ \frac{[\log R_w-\log\widehat{\mathcal R}_{w,t}(f)]_+}{-\log R_w},\nonumber\\
+ g_{R,t}^L&=[u_{R,t}(f_i)-u_{R,t}(F_{m_i})]_+,
+ \label{eq:method_low_reliability}
+\end{align}
+for $0<R_w<1$. The lower controller is thus charged for the additional
+projected deficit caused by its frequency choice, not the deficit
+already present at full frequency. Its replay reward is
+\begin{equation}
+ r_t^L=\mathcal Z_E(\Delta E_i)-\mathcal Z_h(h_t)
+ -\mu_D^L g_{D,t}^L-\mu_R^L g_{R,t}^L.
+ \label{eq:method_low_reward}
+\end{equation}
+The local delay term provides shaping, while the two multipliers
+regulate responsibility-based constraint costs.
+
+\subsubsection{Actor--Critic Update}
+
+Let $Q_1^L,Q_2^L$ be the critics, $\psi$ the actor parameters,
+$\alpha$ the entropy coefficient, and $\delta_L$ the discount factor.
+For a sampled next proposal $\rho'{}^a\sim\pi_\psi(\cdot\mid s_{t+1}^L)$,
+the soft TD target is
+\begin{align}
+ y_t^L=r_t^L+\delta_L(1-\iota_t)\big[&\min_{j=1,2}
+ \bar Q_j^L(s_{t+1}^L,\rho'{}^a)\nonumber\\
+ &-\alpha\log\pi_\psi(\rho'{}^a\mid s_{t+1}^L)\big].
+ \label{eq:method_sac_target}
+\end{align}
+The critics minimize the squared TD error at the stored executed
+action $\rho_i$. The actor minimizes
+\begin{equation}
+ \mathcal L_\pi=\mathbb E\!\left[
+ \alpha\log\pi_\psi(\rho^a\mid s^L)
+ -\min_{j=1,2}Q_j^L(s^L,\rho^a)\right].
+ \label{eq:method_sac_actor}
+\end{equation}
+Here the policy density refers to the proposal before the operating
+floor in \eqref{eq:method_frequency_floor} is applied.
+
+\subsection{Joint Learning and Constraint Adaptation}
+\label{subsec:joint}
+
+Both policies interact with the same environment before their updates.
+After a complete scheduling trajectory, workflow outcomes determine
+the upper failure credits and lower counterfactual credits. These are
+attached to chronological transitions and stored in the respective
+replay buffers. The upper estimators and the lower actor--critic are
+then updated from replay, and their target networks are softly updated.
+No additional coordination network is introduced.
+
+Deadline multipliers use proportional--integral constraint feedback,
+following the control perspective of Lagrangian
+methods~\cite{stooke2020}. Let $\mathcal K_H$ and $\mathcal K_L$ be recent
+trajectory windows, and $\vartheta\in(0,1]$ the fraction of the upper
+tail used for lower feedback. The two statistics are, respectively,
+\begin{equation}
+ J_H=\frac{1}{|\mathcal K_H|}\sum_{e\in\mathcal K_H}z_e,
+ \qquad
+ J_L=\operatorname{CVaR}^{\mathrm{upper}}_{\vartheta}
+ \left(\left\{\frac{\sum_{v\in\mathcal W_e}d_v^L}{|\mathcal W_e|}
+ \right\}_{e\in\mathcal K_L}\right),
+ \label{eq:method_dual_statistics}
+\end{equation}
+where the empirical upper-tail CVaR is the mean of the largest
+$\lceil\vartheta|\mathcal K_L|\rceil$ values. Thus, upper feedback observes
+the failure probability underlying ESP, whereas lower feedback
+observes the tail of DVFS-attributable lateness, not total system
+failure. For level $j\in\{H,L\}$, let $b_j$ be its budget, $\epsilon_j$
+the integral step size, $K_j$ the proportional gain, $I_j$ the integral
+state, and $\mu_{D,\max}^j$ the multiplier bound. With
+$\varepsilon_j=J_j-b_j$, update
+\begin{align}
+ I_j&\leftarrow\Pi_{[0,\mu_{D,\max}^j]}(I_j+\epsilon_j\varepsilon_j),\nonumber\\
+ \mu_D^j&\leftarrow\Pi_{[0,\mu_{D,\max}^j]}(I_j+K_j\varepsilon_j).
+ \label{eq:method_pi_dual}
+\end{align}
+Here $\Pi$ denotes interval projection. The upper training budget
+controls a tolerated failure frequency;
+strict model-acceptance requirements are assessed separately.
+
+Reliability adaptation uses completed workflow outcomes. Let
+$\epsilon_R^H,\epsilon_R^L$ be reliability update step sizes and
+$\mu_{R,\max}^H,\mu_{R,\max}^L$ their multiplier bounds. The upper
+multiplier accumulates the log-reliability deficit after each completed
+workflow, while the lower multiplier compares the recent binary
+violation frequency $\bar b_R$ with a small budget $b_R$:
+\begin{align}
+ \mu_R^H&\leftarrow
+ \Pi_{[0,\mu_{R,\max}^H]}(\mu_R^H+\epsilon_R^H\ell_w^R),\nonumber\\
+ \mu_R^L&\leftarrow
+ \Pi_{[0,\mu_{R,\max}^L]}(\mu_R^L+\epsilon_R^L(\bar b_R-b_R)),
+ \label{eq:method_reliability_duals}
+\end{align}
+where $\bar b_R$ averages $\mathbb{I}(\mathcal R_w<R_w)$ over recent
+completed workflows. These updates are intentionally asymmetric: upper reliability
+pressure is nondecreasing, whereas lower pressure decreases when its
+violation budget is satisfied.
+
+Placement thus learns from end-to-end outcomes, while frequency control
+learns from the additional losses attributed to slowdown. The normalized
+feedback provides learning surrogates for the physical objective;
+service-level feasibility is assessed using the original deadline and
+reliability criteria, rather than inferred from the shaped return.
+
+% Preview-only bibliography. In the full paper, use the existing references.bib.
+\begin{thebibliography}{4}
+\bibitem{wang2016dueling}
+Z. Wang, T. Schaul, M. Hessel, H. van Hasselt, M. Lanctot, and
+N. de Freitas, ``Dueling network architectures for deep reinforcement
+learning,'' in \emph{Proc. ICML}, 2016, pp. 1995--2003.
+\bibitem{vanhasselt2016}
+H. van Hasselt, A. Guez, and D. Silver, ``Deep reinforcement learning
+with double Q-learning,'' in \emph{Proc. AAAI}, vol. 30, no. 1, 2016.
+\bibitem{haarnoja2018}
+T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine, ``Soft actor-critic:
+Off-policy maximum entropy deep reinforcement learning with a stochastic
+actor,'' in \emph{Proc. ICML}, 2018, pp. 1861--1870.
+\bibitem{stooke2020}
+A. Stooke, J. Achiam, and P. Abbeel, ``Responsive safety in reinforcement
+learning by PID Lagrangian methods,'' in \emph{Proc. ICML}, 2020,
+pp. 9133--9143.
+\end{thebibliography}
+\end{document}

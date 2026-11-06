@@ -109,6 +109,18 @@ def parse_args():
     )
     parser.add_argument("--label", default=None)
     parser.add_argument(
+        "--failure-rate-scale",
+        type=float,
+        default=1.0,
+        help="Evaluation-only multiplier applied to every server failure rate.",
+    )
+    parser.add_argument(
+        "--high-reliability-lambda-override",
+        type=float,
+        default=None,
+        help="Evaluation-only override for the upper reliability multiplier.",
+    )
+    parser.add_argument(
         "--checkpoint",
         default=None,
         help=(
@@ -162,12 +174,17 @@ def aggregate(rows):
     return {name: describe([row[name] for row in rows]) for name in REPORT}
 
 
-def load_agent(checkpoint, config, resources, agent_class, use_low, seed):
+def load_agent(checkpoint, config, resources, agent_class, use_low, seed,
+               reliability_lambda_override=None):
     agent_config = configure_agent_state(config, resources, smoke_test=False)
     agent_config["use_low_agent"] = bool(use_low)
     agent = agent_class(agent_config, seed=seed)
     agent.load_checkpoint(checkpoint)
     agent.high_agent.epsilon = 0.0
+    if reliability_lambda_override is not None:
+        agent.high_agent.reliability_lagrangian.lambda_reliability = float(
+            reliability_lambda_override
+        )
     return agent
 
 
@@ -179,6 +196,10 @@ def main():
     agent_class = select_agent_class(config)
     with redirect_stdout(StringIO()):
         resources = build_resources(config, int(config.get("training", {}).get("seed", 42)))
+    if args.failure_rate_scale <= 0.0:
+        raise ValueError("--failure-rate-scale must be positive.")
+    for server in resources["servers"]:
+        server["failure_rate"] = float(server["failure_rate"]) * args.failure_rate_scale
     objective = HierarchicalObjective(config.get("objective", {}))
     # The checkpoint is picked on the training regime and accepted on whichever
     # regime is under test, so one model is reported across tight/medium/loose.
@@ -243,7 +264,8 @@ def main():
     for path in checkpoints:
         with redirect_stdout(StringIO()):
             agent = load_agent(path, select_config, resources, agent_class, True,
-                               args.select_seed_start)
+                               args.select_seed_start,
+                               args.high_reliability_lambda_override)
             rows = evaluate(agent, select_config, resources, objective,
                             args.select_seed_start, args.num_seeds, True)
         summary = aggregate(rows)
@@ -271,7 +293,8 @@ def _accept(args, run_dir, config, resources, objective, agent_class,
     for mode, use_low in (("rho1", False), ("sac", True)):
         with redirect_stdout(StringIO()):
             agent = load_agent(best_path, config, resources, agent_class, use_low,
-                               args.accept_seed_start)
+                               args.accept_seed_start,
+                               args.high_reliability_lambda_override)
             rows = evaluate(agent, config, resources, objective,
                             args.accept_seed_start, args.num_seeds, use_low)
         deadline_satisfaction = satisfaction_statistics(
@@ -319,6 +342,8 @@ def _accept(args, run_dir, config, resources, objective, agent_class,
                                   args.accept_seed_start + args.num_seeds - 1],
         "deadline_target": args.deadline_target,
         "reliability_target": args.reliability_target,
+        "failure_rate_scale": args.failure_rate_scale,
+        "high_reliability_lambda_override": args.high_reliability_lambda_override,
         "acceptance_deadline_type": config_deadline_type(config),
         "selection_deadline_type": args.resolved_select_deadline_type,
         "selected_checkpoint": best_path.name,

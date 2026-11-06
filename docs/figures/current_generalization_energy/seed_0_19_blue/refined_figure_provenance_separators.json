@@ -1,0 +1,128 @@
+{
+  "dataset": "Complete paired block 0-19, selected after proposed-policy inspection",
+  "selection_is_conditional": true,
+  "num_workflows_per_seed": 50,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "records": 2160,
+  "boxes": 108,
+  "samples_per_box": 20,
+  "metric": "total_energy",
+  "unit": "J",
+  "all_source_rows_retained": true,
+  "same_y_range_within_workflow_scale": false,
+  "axes": "Independent linear y ranges, common J unit and 10^6 multiplier",
+  "sample_points": "Hidden; all 2160 original energies retained in statistics",
+  "boxplot": "median, IQR, 1.5-IQR whiskers; outlier markers hidden, not observations removed",
+  "palette": {
+    "CAHDRL": "#4C78A8",
+    "DQN-Edge": "#D99A5B",
+    "DReaM-DQN": "#83A783",
+    "OOAC": "#A28AA7"
+  },
+  "method_order_left_to_right": [
+    "DQN-Edge",
+    "DReaM-DQN",
+    "OOAC",
+    "CAHDRL"
+  ],
+  "selection_footer_visible": false,
+  "palette_source": "User-requested muted categorical revision, 2026-10-27",
+  "display_method_name": "CAHDRL; internal model key remains d3qn_sac",
+  "group_separators": {
+    "enabled": true,
+    "count": 18,
+    "x_per_panel": [
+      0.5,
+      1.5
+    ],
+    "alpha": 0.28,
+    "axes_height_fraction": [
+      0.1,
+      0.86
+    ]
+  },
+  "sources": [
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_seed_block_0_19_20261026\\ss_37\\comparison_rows.csv",
+      "sha256": "9be96c0d61b6e5b55b5181bf8ed2eca941881ff72568a095b916fe1e75d724fd",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\ss_37_dqn_edge\\comparison_rows.csv",
+      "sha256": "3d42ae0327a37b065ba564f837c6da626855c999783e5ce6aa6e11412cd31e45",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\ss_37_dream_dqn\\comparison_rows.csv",
+      "sha256": "1cececcc8678d56fd10e839cd1c62af9943d7be1605c7f69830d29c0e7d1a8b9",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\ss_37_oo_actor_critic\\comparison_rows.csv",
+      "sha256": "9a3c0ddd77bc3cd75087f10fbbcb88a2fa0f32517a76cf4e3b6d3e671839707b",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_seed_block_0_19_20261026\\sm_74\\comparison_rows.csv",
+      "sha256": "ea372fc418d639cfd5e1a447a217fef22a694d74c7b15d2c9f062de1d44cafaa",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\sm_74_dqn_edge\\comparison_rows.csv",
+      "sha256": "045bc702e62db6cea0d4be42f94b110f998595e24ba7cd1fd0dece743098e076",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\sm_74_dream_dqn\\comparison_rows.csv",
+      "sha256": "10e2aaaaa1a4a8940738f50a6221142aea339bf8295b85179b98ea0ca89411e8",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\sm_74_oo_actor_critic\\comparison_rows.csv",
+      "sha256": "5ca7bfab8d2c8c3c3a8f099066a09c287aee7c7497c18edce75cee3e6a3b5f5b",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\legacy_seed_block_0_19_20261026\\sl_111\\comparison_rows.csv",
+      "sha256": "7b5e95fe5b6947cf438d962adc4137e19a28e7c5d9d6623a735d1933cb5223bb",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\sl_111_dqn_edge\\comparison_rows.csv",
+      "sha256": "a82947291c5fa72851f32f90ed89c15e160d47f5bf9abc2b27eb1ede6249c197",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\sl_111_dream_dqn\\comparison_rows.csv",
+      "sha256": "486d2bd59000b487322c0952d2f0aaae56f91c030370e95ff89f88d80caf9083",
+      "rows": 180
+    },
+    {
+      "path": "D:\\研究生期间\\第二篇\\DRLEC\\results\\baselines_seed_block_0_19_20261026\\sl_111_oo_actor_critic\\comparison_rows.csv",
+      "sha256": "781b702ed570121f3d0e2f9d2d5aa2ad1b63ceb6732e4690ee835588cbda0ab7",
+      "rows": 180
+    }
+  ],
+  "actual_data_format": "original CSV"
+}

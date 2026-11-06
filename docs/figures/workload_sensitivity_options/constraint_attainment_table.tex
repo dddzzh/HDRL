@@ -1,0 +1,40 @@
+% LaTeX fragment; requires \usepackage{booktabs} in the manuscript preamble.
+% Source: both completed, unfiltered SM74 sensitivity experiments.
+\begin{table*}[t]
+\centering
+\caption{Constraint attainment in the SM/Tight sensitivity experiments.
+All entries are percentages. ESP denotes ESP@90: the fraction of workload
+realizations with at least 90\% of workflows completed by their deadlines.
+Rel. denotes the fraction of realizations in which every workflow satisfies
+the modeled reliability requirement of 0.9. A grouped column reports the
+common value at every tested point in that group, not an average over points.}
+\label{tab:workload_sensitivity_attainment}
+\small
+\setlength{\tabcolsep}{8pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \multicolumn{3}{c}{ESP@90 (\%)} & Rel. (\%) \\
+\cmidrule(lr){2-4}\cmidrule(l){5-5}
+Method & Count: 50--250 & Rate: 0.01--0.10 & Rate: 0.20 & All tested points \\
+\midrule
+DQN-Edge & 100 & 100 & 90 & 100 \\
+DReaM-DQN & 100 & 100 & 90 & 100 \\
+OOAC & 100 & 100 & 100 & 100 \\
+D3QN+SAC & 100 & 100 & 100 & 100 \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{0.98\textwidth}
+\footnotesize
+The count sweep tests 50, 100, 150, 200, and 250 workflows at
+$0.03\,\mathrm{s}^{-1}$, with reference deadlines recomputed per batch.
+The rate sweep tests 0.01, 0.03, 0.06, 0.10, and
+$0.20\,\mathrm{s}^{-1}$ with 50 workflows and relative deadline budgets
+fixed at the original $0.03\,\mathrm{s}^{-1}$ baseline.
+Each point uses 20 unfiltered workload seeds and frozen trained models.
+An ESP of 90\% still meets the declared empirical 90\% service gate.
+Reliability attainment of 100\% is not a claim that modeled reliability
+equals one or that unseen workloads are guaranteed to satisfy the constraints.
+\end{minipage}
+\end{table*}

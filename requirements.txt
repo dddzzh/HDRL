@@ -1,4 +1,23 @@
-numpy>=1.24
+# DRLEC runtime dependencies — Python 3.10+ (validated on 3.10)
+# Install everything with:
+#   pip install -r requirements.txt
+#
+# torch is pinned to the CUDA 12.8 (cu128) build that was used to validate
+# the RTX 5070 (Blackwell / sm_120) training runs. If the server GPU needs a
+# different CUDA build, adjust the version/local tag and index URL together.
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Core: training, evaluation and inference
+torch==2.11.0+cu128
+numpy>=1.26,<3.0
+
+# Plotting / analysis
+matplotlib>=3.8
 pandas>=2.0
-torch>=2.0
-pytest>=7.0
+
+# Alibaba dataset tooling (streaming read of the large workflow JSON)
+ijson>=3.2
+
+# Figure / PDF tooling (system figure drawing, PDF refresh)
+fonttools>=4.40
+pypdf>=4.0

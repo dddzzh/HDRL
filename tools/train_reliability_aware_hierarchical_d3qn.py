@@ -109,7 +109,29 @@ class ReliabilityAwareHierarchicalD3QNAgent(DualHeadHierarchicalD3QNAgent):
         return payload
 
     def load_high_checkpoint(self, path, *, freeze=False):
-        payload = self.load_checkpoint(path)
+        """Load only the three upper heads; always leave SAC freshly initialized."""
+        payload = torch.load(
+            str(path), map_location=self.high_agent.agent_R.device,
+            weights_only=False,
+        )
+        if payload.get("checkpoint_format") != self.CHECKPOINT_FORMAT:
+            raise RuntimeError(
+                "Reliability-aware high initialization requires a three-head "
+                f"checkpoint; got {payload.get('checkpoint_format')!r}."
+            )
+        self.high_agent.agent_R.load_state_dict(payload["dual_head_state_dict"])
+        if (
+            self.high_agent.deadline_lagrangian is not None
+            and payload.get("deadline_lagrangian") is not None
+        ):
+            self.high_agent.deadline_lagrangian.load_state_dict(
+                payload["deadline_lagrangian"]
+            )
+        reliability_state = payload.get("reliability_lagrangian")
+        if reliability_state is not None:
+            self.high_agent.reliability_lagrangian.load_state_dict(
+                reliability_state
+            )
         if freeze:
             learner = self.high_agent.agent_R
             for network in (

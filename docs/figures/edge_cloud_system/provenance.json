@@ -1,0 +1,22 @@
+{
+  "source_pdf": "C:\\Users\\Administrator\\Desktop\\edge_cloud_network_v4.pdf",
+  "source_sha256": "e915eeae9252b6bf809f03a201e98629eb8beac876209777d6df74f0e8f5b473",
+  "palette": [
+    "#E0EAF6",
+    "#A8C0E4",
+    "#BBDDB2",
+    "#C7C5C6",
+    "#F5AA83",
+    "#BAE0E3"
+  ],
+  "icon_source": "Embedded editable SVG paths from author-supplied prior diagram",
+  "code_anchor": "tools/train_coupled_hierarchical_d3qn_sac.py; v3_sm_74_legacy_train.json",
+  "task_order": "shared smallest_workload, not a learned task-selection policy",
+  "learned_actions": [
+    "server selection",
+    "continuous DVFS frequency"
+  ],
+  "no_backup_duplication": true,
+  "communication": "DAG dependency data; upload/download energy outside model",
+  "text_overlap_checked": true
+}

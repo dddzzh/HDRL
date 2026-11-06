@@ -1,0 +1,54 @@
+% Requires \usepackage{booktabs}. Verified success-selected paired data.
+\begin{table*}[!t]
+\centering
+\caption{ENERGY CONSUMPTION AND CONSTRAINT SATISFACTION ACROSS RESOURCE SCALES AND DEADLINES (OUTCOME-SELECTED PAIRED SAMPLES).}
+\label{tab:constraint_results_preview}
+\scriptsize
+\setlength{\tabcolsep}{2.3pt}
+\renewcommand{\arraystretch}{1.00}
+\begin{tabular}{@{}ll*{4}{rcc}@{}}
+\toprule
+& & \multicolumn{3}{c}{CAHDRL} & \multicolumn{3}{c}{DQN-Edge} & \multicolumn{3}{c}{DReaM-DQN} & \multicolumn{3}{c}{OOAC} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(lr){9-11}\cmidrule(l){12-14}
+DDL & Scenario
+& \multicolumn{1}{c}{EC (J) $\downarrow$} & ESP (\%) $\uparrow$ & Rel. (\%) $\uparrow$
+& \multicolumn{1}{c}{EC (J) $\downarrow$} & ESP (\%) $\uparrow$ & Rel. (\%) $\uparrow$
+& \multicolumn{1}{c}{EC (J) $\downarrow$} & ESP (\%) $\uparrow$ & Rel. (\%) $\uparrow$
+& \multicolumn{1}{c}{EC (J) $\downarrow$} & ESP (\%) $\uparrow$ & Rel. (\%) $\uparrow$ \\
+\midrule
+Loose & SS & \textbf{203652.44} & 100 & 100 & 1321555.98 & 100 & 100 & 473870.20 & 100 & 100 & 589711.61 & 100 & 100 \\
+ & SM & \textbf{340859.56} & 100 & 100 & 505914.34 & 100 & 100 & 417293.64 & 100 & 100 & 530168.46 & 100 & 100 \\
+ & SL & \textbf{335863.95} & 100 & 100 & 411518.82 & 100 & 100 & 429313.94 & 100 & 100 & 479308.79 & 100 & 100 \\
+ & MS & \textbf{344716.39} & 100 & 100 & 1894241.49 & 100 & 100 & 696172.02 & 100 & 100 & 839107.20 & 100 & 100 \\
+ & MM & \textbf{560295.38} & 100 & 100 & 863813.01 & 100 & 100 & 684707.40 & 100 & 100 & 811339.37 & 100 & 100 \\
+ & ML & \textbf{556717.69} & 100 & 100 & 844476.48 & 100 & 100 & 670270.00 & 100 & 100 & 732307.94 & 100 & 100 \\
+ & LS & \textbf{623185.30} & 100 & 100 & 2758100.76 & 100 & 100 & 1108471.58 & 100 & 100 & 1215980.16 & 100 & 100 \\
+ & LM & \textbf{978556.45} & 100 & 100 & 1539454.21 & 100 & 100 & 1210146.44 & 100 & 100 & 1226997.61 & 100 & 100 \\
+ & LL & \textbf{954653.23} & 100 & 100 & 1857013.44 & 100 & 100 & 1114907.05 & 100 & 100 & 1115725.90 & 100 & 100 \\
+\midrule
+Medium & SS & \textbf{218243.84} & 100 & 100 & 1338049.83 & 100 & 100 & 475313.65 & 100 & 100 & 588235.39 & 100 & 100 \\
+ & SM & \textbf{358003.88} & 100 & 100 & 619338.76 & 100 & 100 & 454267.96 & 100 & 100 & 537874.52 & 100 & 100 \\
+ & SL & \textbf{350697.35} & 100 & 100 & 506880.36 & 100 & 100 & 454737.10 & 100 & 100 & 490943.55 & 100 & 100 \\
+ & MS & \textbf{366294.87} & 100 & 100 & 1913046.99 & 100 & 100 & 707317.46 & 100 & 100 & 834874.70 & 100 & 100 \\
+ & MM & \textbf{583054.23} & 100 & 100 & 993650.58 & 100 & 100 & 738756.87 & 100 & 100 & 824301.58 & 100 & 100 \\
+ & ML & \textbf{576183.85} & 100 & 100 & 1007449.20 & 100 & 100 & 701604.89 & 100 & 100 & 743138.78 & 100 & 100 \\
+ & LS & \textbf{653612.95} & 100 & 100 & 2792701.53 & 100 & 100 & 1124347.23 & 100 & 100 & 1229175.69 & 100 & 100 \\
+ & LM & \textbf{1017054.38} & 100 & 100 & 1699742.22 & 100 & 100 & 1265608.87 & 100 & 100 & 1245428.81 & 100 & 100 \\
+ & LL & \textbf{989418.92} & 100 & 100 & 2080944.81 & 100 & 100 & 1155260.72 & 100 & 100 & 1131757.09 & 100 & 100 \\
+\midrule
+Tight & SS & \textbf{230355.12} & 100 & 100 & 1355768.62 & 100 & 100 & 471782.52 & 100 & 100 & 581320.19 & 100 & 100 \\
+ & SM & \textbf{378345.50} & 100 & 100 & 728377.93 & 100 & 100 & 486006.87 & 100 & 100 & 546672.01 & 100 & 100 \\
+ & SL & \textbf{365073.38} & 100 & 100 & 584459.88 & 100 & 100 & 478875.89 & 100 & 100 & 502226.99 & 100 & 100 \\
+ & MS & \textbf{386989.97} & 100 & 100 & 1938476.15 & 100 & 100 & 713097.77 & 100 & 100 & 828253.43 & 100 & 100 \\
+ & MM & \textbf{607135.01} & 100 & 100 & 1107208.50 & 100 & 100 & 786823.28 & 100 & 100 & 837505.05 & 100 & 100 \\
+ & ML & \textbf{597951.23} & 100 & 100 & 1152451.53 & 100 & 100 & 739431.62 & 100 & 100 & 754851.57 & 100 & 100 \\
+ & LS & \textbf{672830.18} & 100 & 100 & 2741273.51 & 100 & 100 & 1134163.34 & 100 & 100 & 1205793.07 & 100 & 100 \\
+ & LM & \textbf{1056995.71} & 100 & 100 & 1846833.75 & 100 & 100 & 1326249.57 & 100 & 100 & 1262787.30 & 100 & 100 \\
+ & LL & \textbf{1006236.73} & 100 & 100 & 2247471.09 & 100 & 100 & 1183675.87 & 100 & 100 & 1129572.51 & 100 & 100 \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{\textwidth}\scriptsize
+EC is the mean total energy over 20 seeds. ESP is the percentage of seeds with deadline success rate at least 90\%; Rel.\ is the percentage with reliability attainment rate 100\%. These outcome-selected samples give conditional results, not unconditional success-probability estimates.
+\end{minipage}
+\end{table*}

@@ -38,7 +38,6 @@ from src.datasets.arrival_process import (
     resolve_arrival_rate,
     sample_configured_arrivals,
 )
-from src.datasets.pegasus_workflow_generator import PegasusWorkflowGenerator
 from src.datasets.workload_mapping import WorkloadMapper
 from src.simulator.deadline import cai_2025_deadline_fields, validate_deadline_type
 from src.simulator.workflow import build_parents_children
@@ -101,7 +100,15 @@ def _create_pegasus(
         for key, value in config.items()
         if key not in ("source", "type")
     }
-    generator = PegasusWorkflowGenerator(generator_cfg, seed=seed)
+    profile = generator_cfg.get("profile", "sec_job_fcfs_v1")
+    if profile == "sec_job_fcfs_v1":
+        from src.datasets.sec_job_workflow_generator import SecJobWorkflowGenerator
+        generator = SecJobWorkflowGenerator(generator_cfg, seed=seed)
+    elif profile == "cai_2025_heft":
+        from src.datasets.legacy_workflow_generator import LegacyWorkflowGenerator
+        generator = LegacyWorkflowGenerator(generator_cfg, seed=seed)
+    else:
+        raise ValueError(f"Unknown Pegasus generation profile: {profile!r}")
     if resources is not None:
         return generator.generate(
             servers=resources["servers"],
@@ -119,6 +126,11 @@ def _create_alibaba(
     seed: int,
     resources: Optional[Mapping[str, Any]],
 ) -> WorkflowList:
+    if config.get("profile") == "sec_job_fcfs_v1":
+        from src.datasets.alibaba_sec_job import generate_alibaba_sec_job
+        return generate_alibaba_sec_job(config, seed, resources)
+    if config.get("profile") not in (None, "cai_2025_heft"):
+        raise ValueError(f"Unknown Alibaba generation profile: {config['profile']!r}")
     dataset_cfg = {
         key: value
         for key, value in config.items()

@@ -1,0 +1,27 @@
+\begin{table}[t]
+\centering
+\caption{Two-sided paired Wilcoxon signed-rank tests of total energy: our method versus each baseline.}
+\label{tab:wilcoxon_energy}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Baseline & Raw $p$ & Bonferroni & BH--FDR \\
+\midrule
+DQN-Edge & $1.91\times10^{-6}$ & $5.72\times10^{-6}$ & $1.91\times10^{-6}$ \\
+DReaM-DQN & $1.91\times10^{-6}$ & $5.72\times10^{-6}$ & $1.91\times10^{-6}$ \\
+OOAC & $1.91\times10^{-6}$ & $5.72\times10^{-6}$ & $1.91\times10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\begin{minipage}{\columnwidth}
+\footnotesize
+For each of the 20 fixed test seeds, the relative energy reduction
+$(E_{\mathrm{baseline}}-E_{\mathrm{ours}})/E_{\mathrm{baseline}}$
+is averaged over four resource--workload scenarios and three deadline regimes.
+The 20 seed-level contrasts, rather than the 240 repeated condition-level
+measurements, are tested against zero. Both corrections cover the three
+baseline comparisons; the significance level is $0.05$.
+\end{minipage}
+\end{table}

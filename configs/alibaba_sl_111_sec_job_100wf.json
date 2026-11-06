@@ -1,0 +1,46 @@
+{
+  "generator": {
+    "source": "alibaba_json",
+    "profile": "sec_job_fcfs_v1",
+    "path": "data/sec_job_reference",
+    "dataset_scale": "small",
+    "alibaba_path": "outputs/alibaba_test.json",
+    "mapping_calibration_path": "outputs/alibaba_train.json",
+    "num_workflows": 100,
+    "arrival_process": "sec_job_exponential",
+    "arrival_rate": 0.03,
+    "start_time": 0.0,
+    "workload_gc_min": 0.5,
+    "workload_gc_max": 20.0,
+    "workload_jitter_min": 0.8,
+    "workload_jitter_max": 1.2,
+    "data_size_mb_min": 1.0,
+    "data_size_mb_max": 30.0
+  },
+  "resources": {
+    "path": "configs/resources_edge_cloud_dvfs_v3.json",
+    "num_edge": 84,
+    "num_cloud": 27
+  },
+  "simulation": {
+    "ready_task_order": "smallest_workload",
+    "deadline_type": "medium",
+    "workflow_reliability_requirement": 0.9,
+    "default_rho": 1,
+    "rho_min": 0.2,
+    "energy_eta": 0.5,
+    "default_reliability": 0.95,
+    "reliability_exponent": 3,
+    "enable_backup_duplication": false,
+    "remaining_task_reliability_estimate": 0.999,
+    "server_history_ema_alpha": 0.9,
+    "dvfs_action_floor": "energy_efficient",
+    "future_critical_path_safety": true
+  },
+  "evaluation": {
+    "resource_seed": 42,
+    "preflight_seed": 742000,
+    "deadline_types": ["loose", "medium", "tight"],
+    "purpose": "generation_and_deadline_preflight_only_no_model"
+  }
+}
