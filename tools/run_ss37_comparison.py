@@ -2,13 +2,51 @@
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
+
+
+def select_checkpoint(train_dir, mahdrl):
+    """Select on the fixed Small validation panel, before looking at any test scenario."""
+    if mahdrl:
+        with (train_dir / "eval_history.jsonl").open(encoding="utf-8") as stream:
+            rows = [json.loads(line) for line in stream]
+        fields = ("instances", "deadline_missed_workflows", "reliability_missed_workflows")
+    else:
+        with (train_dir / "validation.csv").open(encoding="utf-8", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        fields = ("environments", "DDL_MISS", "REL_MISS")
+    candidates = []
+    for row in rows:
+        count, ddl, rel = (int(row[field]) for field in fields)
+        episode, energy = int(row["episode"]), float(row["mean_energy_J"])
+        if count != 40 or not math.isfinite(energy) or min(ddl, rel, energy) < 0:
+            raise ValueError(f"Invalid Small validation panel at episode {episode}")
+        candidates.append((rel != 0, ddl, energy, episode, rel))
+    if sorted(item[3] for item in candidates) != list(range(20, 1501, 20)):
+        raise ValueError(f"Expected all 75 validation rounds from episode 20 to 1500 in {train_dir}")
+    infeasible, ddl, energy, episode, rel = min(candidates)
+    source = train_dir / f"episode_{episode:04d}.pt"
+    # If every checkpoint violates reliability, report the same DDL/energy ranking as diagnostic only.
+    selected = train_dir / ("diagnostic_min_ddl.pt" if infeasible else "best_min_ddl.pt")
+    temp = selected.with_suffix(".tmp")
+    shutil.copyfile(source, temp)
+    temp.replace(selected)
+    record = dict(episode=episode, reliability_feasible=not infeasible, DDL_MISS=ddl,
+                  REL_MISS=rel, mean_energy_J=energy, checkpoint=selected.name)
+    with (train_dir / "small_selection_min_ddl.csv").open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=record)
+        writer.writeheader()
+        writer.writerow(record)
+    print("[SMALL_SELECTION]", record, flush=True)
+    return selected, record
 
 
 def main():
@@ -27,13 +65,13 @@ def main():
                  if mahdrl else ["--completed-task-context", "--match-upper-state", "--energy-kj"])
         subprocess.run(command + ["--episodes", "1500", "--small20-fifs", "--device", args.device,
                        "--out", name if mahdrl else str(train_dir)] + flags, cwd=ROOT, check=True)
-    checkpoint = train_dir / "best_esp90.pt"
-    if not (train_dir / "episode_1500.pt").is_file() or not checkpoint.is_file():
-        cli.error(f"Expected completed training and a validation-selected checkpoint in {train_dir}")
+    if not (train_dir / "episode_1500.pt").is_file():
+        cli.error(f"Expected completed training in {train_dir}")
+    checkpoint, selection = select_checkpoint(train_dir, mahdrl)
     report = []
     for scale in ("small", "middle", "large"):
         for deadline in ("loose", "medium", "tight"):
-            test_dir = RESULTS / f"{name}_test_{scale}_{deadline}"
+            test_dir = RESULTS / f"{name}_min_ddl_ep{selection['episode']}_{scale}_{deadline}"
             output = test_dir / ("summary.json" if mahdrl else "evaluation.csv")
             if not output.is_file():
                 flags = ["--validation-workers", "8"] if mahdrl else []
@@ -51,12 +89,14 @@ def main():
                 raise ValueError(f"Incomplete test panel in {output}")
             misses = [int(r["deadline_missed_workflows"]) for r in rows]
             rel = [int(r["reliability_missed_workflows"]) for r in rows]
-            report.append(dict(algorithm=args.algorithm, scale=scale, deadline=deadline, environments=20,
+            report.append(dict(algorithm=args.algorithm, episode=selection["episode"],
+                               small_rel_feasible=selection["reliability_feasible"],
+                               scale=scale, deadline=deadline, environments=20,
                                workflows=1000, ESP90=sum(d <= 5 for d in misses),
                                joint=sum(d <= 5 and r == 0 for d, r in zip(misses, rel)),
                                DDL_MISS=sum(misses), REL_MISS=sum(rel),
                                mean_energy_kJ=sum(float(r["energy_J"]) for r in rows) / len(rows) / 1000))
-    path = train_dir / "nine_scenarios.csv"
+    path = train_dir / "nine_scenarios_min_ddl.csv"
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=report[0])
         writer.writeheader()
