@@ -121,6 +121,9 @@ class DQNEdgeCommonReward(DQNEdgePaperReward):
         # the proposed method's adaptive Lagrangian replay fields.
         values.setdefault("reward_mode", "deadline_incremental_only")
         self.objective = HierarchicalObjective(values)
+        self.energy_reward_mode = values.get("energy_reward_mode", "relative_saving")
+        if self.energy_reward_mode not in {"relative_saving", "kilojoules"}:
+            raise ValueError(f"Unknown DQN-Edge energy reward mode: {self.energy_reward_mode}")
         self.fixed_reliability_lambda = float(
             values.get("fixed_reliability_lambda", 0.0)
         )
@@ -159,13 +162,13 @@ class DQNEdgeCommonReward(DQNEdgePaperReward):
             1.0, float(feedback["workflow_task_count"])
         )
         energy_saving_ratio = (energy_scale - energy_actual) / energy_scale
-        energy_reward = (
-            float(self.objective.high_energy_weight)
-            * energy_saving_ratio
-            / workflow_task_count
-        )
+        if self.energy_reward_mode == "kilojoules":
+            energy_reward = -self.objective.high_energy_weight * energy_actual / 1000.0
+        else:
+            energy_reward = self.objective.high_energy_weight * energy_saving_ratio / workflow_task_count
         components = {
-            "version": "dqn_edge_ep740_upper_components_v1",
+            "version": ("dqn_edge_fixed_kj_v1" if self.energy_reward_mode == "kilojoules"
+                        else "dqn_edge_ep740_upper_components_v1"),
             "reward": float(time_reward + energy_reward),
             "time_reward": float(time_reward),
             "energy_reward": float(energy_reward),
@@ -236,7 +239,7 @@ class DQNEdgeCommonReward(DQNEdgePaperReward):
         return time_reward, energy_reward, attention_target, {
             "time_cost": float(-time_reward),
             "energy_cost": float(abs(energy_reward)),
-            "source": COMMON_REWARD_SOURCE,
+            "source": components["version"] if self.energy_reward_mode == "kilojoules" else COMMON_REWARD_SOURCE,
             "components": components,
             "feedback": feedback,
             "uses_lagrangian": False,

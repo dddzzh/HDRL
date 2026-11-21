@@ -6,6 +6,7 @@ import numpy as np
 
 from src.a2c.a2c import Observation
 from src.simulator.resource import compute_execution_time
+from src.simulator.reliability import risk_budget_features
 
 
 TASK_FEATURE_DIM = 3
@@ -36,6 +37,7 @@ class HierarchicalStateEncoder:
         state_cfg = state_cfg or {}
         self.max_ready_tasks = int(state_cfg.get("max_ready_tasks", 32))
         self.max_servers = int(state_cfg.get("max_servers", 16))
+        self.reliability_budget_state = bool(state_cfg.get("reliability_budget_state", False))
         self.debug_high_state = bool(state_cfg.get("debug_high_state", False))
         self._debug_high_state_printed = False
 
@@ -50,7 +52,7 @@ class HierarchicalStateEncoder:
 
     @property
     def low_state_dim(self):
-        return LOW_STATE_FEATURE_DIM
+        return LOW_STATE_FEATURE_DIM + (3 if self.reliability_budget_state else 0)
 
     def encode_high_state(self, env_state: Mapping[str, Any]) -> Observation:
         ready_tasks = tuple(env_state.get("ready_tasks", []))
@@ -461,7 +463,7 @@ class HierarchicalStateEncoder:
         )
         workload = safe_float(task.get("workload_cycles", 0.0))
 
-        return np.array(
+        features = np.array(
             [
                 np.tanh(workload / 1e10),
                 np.clip(execution_time_rho1 / workflow_relative_deadline, 0.0, 10.0),
@@ -477,3 +479,6 @@ class HierarchicalStateEncoder:
             ],
             dtype=np.float32,
         )
+        if self.reliability_budget_state:
+            features = np.concatenate((features, risk_budget_features(safety_metrics, include_task=True))).astype(np.float32)
+        return features

@@ -20,7 +20,9 @@ from src.simulator.resource import (
     compute_rho_energy_efficient,
     compute_transfer_time,
 )
-from src.simulator.reliability import task_reliability_from_server, workflow_reliability
+from src.simulator.reliability import (
+    frequency_dependent_failure_rate, task_reliability_from_server, workflow_reliability,
+)
 from src.simulator.sub_deadline import distribute_existing_workflow_deadline
 from src.simulator.workflow import Task, Workflow, create_workflow_state, is_task_ready
 
@@ -49,6 +51,11 @@ class EdgeCloudWorkflowEnv:
         self.link_bandwidth_mbps = dict(network.get("link_bandwidth_mbps", {}))
         self.bandwidth_mbps = float(network.get("bandwidth_mbps", 100.0))
         self.reliability_exponent = float(self.sim_config.get("reliability_exponent", 1.0))
+        self.reliability_budget_state = bool(self.sim_config.get("reliability_budget_state", False))
+        if self.reliability_budget_state:
+            self._risk_state_reserve_per_cycle = max(
+                frequency_dependent_failure_rate(s, 1., self.reliability_exponent)
+                * compute_execution_time(1., s, 1.) for s in self.servers)
         self.enable_backup_duplication = bool(self.sim_config.get("enable_backup_duplication", False))
         self.workflow_states = [
             create_workflow_state(copy.deepcopy(workflow))
@@ -479,6 +486,20 @@ class EdgeCloudWorkflowEnv:
         server_safety_metrics = {}
         server_energy_refs = []
         global_urgency = self.global_critical_pressure_metrics()
+        risk_state = None
+        if self.reliability_budget_state:
+            workflow = self.workflow_by_id[workflow_id]
+            requirement = self._workflow_reliability_requirement(workflow)
+            if not 0. < requirement < 1.:
+                raise ValueError("Reliability budget state requires a target strictly between zero and one.")
+            assigned = workflow["task_reliability"]
+            risk_state = dict(
+                budget=-math.log(requirement),
+                used=-math.fsum(math.log(max(float(r), 1e-300)) for r in assigned.values()),
+                reserved=self._risk_state_reserve_per_cycle * sum(
+                    t.workload_cycles for t in workflow["workflow"].tasks
+                    if t.id != task_id and t.id not in assigned),
+            )
         # This mean depends on the task/pool, not the candidate server. Reuse
         # it only within this decision; queue-dependent metrics stay fresh.
         mean_current_execution = None
@@ -557,6 +578,8 @@ class EdgeCloudWorkflowEnv:
                 "primary_energy_ref_rho1": primary_energy_ref_rho1,
                 **self._server_history_metrics(server_id),
             }
+            if risk_state is not None:
+                server_safety_metrics[str(server_id)]["reliability_budget_state"] = risk_state
 
         if not server_energy_refs:
             raise RuntimeError(
@@ -575,7 +598,7 @@ class EdgeCloudWorkflowEnv:
                         and backup_index != primary_index
                     )
 
-        return {
+        context = {
             "workflow_id": workflow_id,
             "task_id": task_id,
             "primary_server_mask": primary_server_mask,
@@ -588,6 +611,9 @@ class EdgeCloudWorkflowEnv:
             "shield_relaxed": False,
             "shield_relaxation_reason": None,
         }
+        if risk_state is not None:
+            context["reliability_budget_state"] = risk_state
+        return context
 
     def _estimate_final_download_time_if_exit(self, workflow_state, task_id, server):
         # The scheduling boundary ends when the exit task finishes. IoT result

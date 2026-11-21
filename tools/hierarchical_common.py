@@ -157,6 +157,9 @@ def build_resources(config, seed):
 
 def build_workflows(config, resources, seed, smoke_test=False):
     generator_cfg = copy.deepcopy(config.get("generator", {}))
+    if generator_cfg.get("dataset_scale") == "small_middle":
+        # Stateless alternation survives resume and uses the same rule in validation.
+        generator_cfg["dataset_scale"] = "small" if int(seed) % 2 == 0 else "middle"
     workflow_source = str(
         generator_cfg.get("source", generator_cfg.get("type", "pegasus"))
     ).strip().lower()
@@ -173,12 +176,20 @@ def build_workflows(config, resources, seed, smoke_test=False):
             "dataset_scale": "small",
             "arrival_rate": 0.05,
         })
-    return create_workflows(
+    workflows = create_workflows(
         generator_cfg,
         source=workflow_source,
         seed=seed,
         resources=resources,
     )
+    reference = generator_cfg.get('deadline_reference')
+    if reference == 'shared_fcfs_first_idle_rho1':
+        from src.datasets.sec_job_workflow_generator import assign_shared_fcfs_deadlines
+        assign_shared_fcfs_deadlines(workflows, resources['servers'],
+            resources['network']['link_bandwidth_mbps'], seed, generator_cfg['deadline_type'])
+    elif reference not in (None, 'heft'):
+        raise ValueError(f'Unknown deadline reference: {reference!r}')
+    return workflows
 
 
 def configure_agent_state(config, resources, smoke_test=False):

@@ -1,0 +1,49 @@
+{
+  "seed": 42,
+  "episodes": 1500,
+  "protocol": {
+    "validate_every": 20,
+    "validation_count": 20,
+    "training_seed_base": 100000
+  },
+  "config": {
+    "generator": {
+      "num_workflows": 20,
+      "dataset_scale": "small",
+      "arrival_process": "cai_2025_exponential",
+      "arrival_rate": 0.03,
+      "profile": "cai_2025_heft",
+      "deadline_reference": "shared_fcfs_first_idle_rho1"
+    },
+    "resources": {
+      "path": "configs/resources_edge_cloud_dvfs_v3.json",
+      "num_edge": 28,
+      "num_cloud": 9
+    },
+    "simulation": {
+      "ready_task_order": "smallest_workload",
+      "deadline_type": "medium",
+      "workflow_reliability_requirement": 0.95,
+      "default_rho": 1,
+      "rho_min": 0.2,
+      "energy_eta": 0.5,
+      "default_reliability": 0.95,
+      "reliability_exponent": 3,
+      "enable_backup_duplication": false,
+      "remaining_task_reliability_estimate": 0.999,
+      "server_history_ema_alpha": 0.9,
+      "dvfs_action_floor": "energy_efficient",
+      "future_critical_path_safety": true,
+      "reliability_budget_state": true
+    },
+    "legacy_failure_rate_scale": 12.0,
+    "agent": {
+      "shared": {
+        "state": {
+          "max_ready_tasks": 48,
+          "reliability_budget_state": true
+        }
+      }
+    }
+  }
+}

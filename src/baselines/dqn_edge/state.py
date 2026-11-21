@@ -169,6 +169,7 @@ class DQNEdgeCommonStateBuilder:
 
     def __init__(self, num_servers, state_config=None):
         values = dict(state_config or {})
+        self.completed_task_context = values.pop("completed_task_context", False)
         values["max_servers"] = int(num_servers)
         self.encoder = build_shared_state_encoder(values)
 
@@ -191,8 +192,17 @@ class DQNEdgeCommonStateBuilder:
         observation = self.encoder.encode_high_state(env.get_state())
         return np.asarray(observation.vector, dtype=np.float32)
 
-    @staticmethod
-    def context(env):
-        # Keep DQN-Edge's context-attention input.  It is part of the policy
-        # architecture being compared, not part of the shared state vector.
-        return DQNEdgeStateBuilder.context(env)
+    def context(self, env):
+        if not self.completed_task_context:
+            return DQNEdgeStateBuilder.context(env)
+        # Task energy and planned finish are booked at dispatch. Count them
+        # only after the simulator has processed the task's completion.
+        completed = 0
+        latency = energy = 0.0
+        for workflow in env.workflow_states:
+            for task, joules in workflow["task_energy"].items():
+                if workflow["task_status"][task] == "finished":
+                    completed += 1
+                    latency += workflow["task_finish_times"][task] - workflow["arrival_time"]
+                    energy += joules
+        return np.log1p([latency / max(completed, 1), energy]).astype(np.float32)

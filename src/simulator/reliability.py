@@ -4,6 +4,24 @@ import math
 from typing import Mapping, Optional
 
 
+def risk_budget_features(metrics: Mapping, *, include_task: bool = False) -> tuple[float, ...]:
+    """Observed risk ratios; do not hide exhausted budgets by clipping at one."""
+    data = metrics.get("reliability_budget_state")
+    if not isinstance(data, Mapping):
+        raise ValueError("Reliability budget state is enabled but decision metadata is missing.")
+    budget, used, reserved = (float(data[k]) for k in ("budget", "used", "reserved"))
+    if not (all(math.isfinite(x) for x in (budget, used, reserved))
+            and budget > 0. and used >= 0. and reserved >= 0.):
+        raise ValueError("Invalid observed reliability budget.")
+    features = (used / budget, reserved / budget)
+    if include_task:
+        reliability = float(metrics["task_reliability_rho_1"])
+        if not math.isfinite(reliability) or not 0. <= reliability <= 1.:
+            raise ValueError("Invalid full-frequency task reliability.")
+        features += (-math.log(max(reliability, 1e-300)) / budget,)
+    return features
+
+
 def clamp_probability(value: float) -> float:
     return min(1.0, max(0.0, float(value)))
 
